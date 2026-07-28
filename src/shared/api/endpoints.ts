@@ -8,6 +8,7 @@ import type {
   ColumnListResponse,
   NativeAuthSuccessResponse,
   Replica,
+  RoamingCapabilityResponse,
   SessionResponse,
   SyncStatusResponse,
   Workspace,
@@ -182,4 +183,14 @@ export function pullWorkspace(input: {
     };
     hasMore: boolean;
   }>(`/sync/pull?${query.toString()}`);
+}
+
+export function provisionRoamingBoard(boardId: string) {
+  return apiRequest<RoamingCapabilityResponse>(
+    '/sync/roaming/capability',
+    {
+      method: 'POST',
+      body: JSON.stringify({ boardId }),
+    },
+  );
 }

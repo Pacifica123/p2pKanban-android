@@ -10,9 +10,18 @@ import {
   getCards,
   getColumns,
   moveCard,
+  provisionRoamingBoard,
   updateCard,
 } from '../../shared/api/endpoints';
 import type { Card } from '../../shared/types/api';
+import {
+  installRoamingCapability,
+  loadRoamingCapability,
+  publishBoardSnapshot,
+  publishLocalOperation,
+  pullRoamingBoard,
+} from '../roaming/service';
+import type { RoamingCapability } from '../roaming/types';
 import { touchWorkspaceSync } from '../sync/syncService';
 import {
   LOCAL_SCHEMA_VERSION,
@@ -37,6 +46,8 @@ export interface LocalBoardRuntime {
   flushing: boolean;
   pendingCount: number;
   failedCount: number;
+  syncMode: 'node' | 'roaming';
+  relayCount: number;
   lastError: string | null;
   refresh: () => Promise<void>;
   retryFailed: () => Promise<void>;
@@ -84,8 +95,11 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
   const [refreshing, setRefreshing] = useState(false);
   const [flushing, setFlushing] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
+  const [syncMode, setSyncMode] = useState<'node' | 'roaming'>('node');
+  const [relayCount, setRelayCount] = useState(0);
   const snapshotRef = useRef<LocalBoardSnapshot | null>(null);
   const operationsRef = useRef<LocalOperation[]>([]);
+  const roamingCapabilityRef = useRef<RoamingCapability | null>(null);
   const flushLock = useRef(false);
   const storageChainRef = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -106,8 +120,31 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     if (!isOnline) return;
     setRefreshing(true);
     setLastError(null);
+    let relaySucceeded = false;
+    let relayReceived = 0;
+    let relayFailure: unknown = null;
     try {
       await runSerialized(async () => {
+        const storedCapability = roamingCapabilityRef.current
+          || await loadRoamingCapability(boardId);
+        if (storedCapability) {
+          roamingCapabilityRef.current = storedCapability;
+          try {
+            const relay = await pullRoamingBoard(storedCapability, snapshotRef.current);
+            relayReceived = relay.received;
+            if (relay.snapshot) {
+              const queued = await loadOperationQueue();
+              await persistBoardAndQueue(relay.snapshot, queued);
+              applyState(relay.snapshot, queued);
+            }
+            setSyncMode('roaming');
+            setRelayCount(relay.relayCount);
+            relaySucceeded = true;
+          } catch (error) {
+            relayFailure = error;
+          }
+        }
+
         await touchWorkspaceSync(workspaceId).catch(() => null);
         const [board, columns, cards, allOperations] = await Promise.all([
           getBoard(boardId),
@@ -126,9 +163,28 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
         };
         const merged = await persistServerSnapshot(seeded, allOperations);
         applyState(merged, allOperations);
+
+        if (roamingCapabilityRef.current && relayReceived === 0) {
+          await publishBoardSnapshot(roamingCapabilityRef.current, merged);
+          relaySucceeded = true;
+          setSyncMode('roaming');
+          setRelayCount(roamingCapabilityRef.current.relays.length);
+        } else if (!roamingCapabilityRef.current) {
+          try {
+            const capability = await provisionRoamingBoard(boardId);
+            await installRoamingCapability(capability);
+            roamingCapabilityRef.current = capability;
+            await publishBoardSnapshot(capability, merged);
+            setSyncMode('roaming');
+            setRelayCount(capability.relays.length);
+            relaySucceeded = true;
+          } catch {
+            // An older node simply keeps using the ordinary coordinator path.
+          }
+        }
       });
     } catch (error) {
-      setLastError(message(error));
+      if (!relaySucceeded) setLastError(message(relayFailure || error));
     } finally {
       setRefreshing(false);
     }
@@ -154,7 +210,15 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
           if (!current || current.status !== 'pending') continue;
 
           try {
-            if (current.kind === 'card.create') {
+            const roamingCapability = roamingCapabilityRef.current
+              || await loadRoamingCapability(boardId);
+            if (roamingCapability && !isTemporaryCardId(current.entityId)) {
+              roamingCapabilityRef.current = roamingCapability;
+              await publishLocalOperation(roamingCapability, current, currentSnapshot);
+              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
+              setSyncMode('roaming');
+              setRelayCount(roamingCapability.relays.length);
+            } else if (current.kind === 'card.create') {
               const created = await createCard(boardId, current.payload.input);
               const replaced = replaceCreatedCard(
                 currentSnapshot,
@@ -198,7 +262,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
             await persistBoardAndQueue(currentSnapshot, allOperations);
             applyState(currentSnapshot, allOperations);
           } catch (error) {
-            if (isNetworkError(error)) {
+            if (roamingCapabilityRef.current || isNetworkError(error)) {
               setLastError(message(error));
               break;
             }
@@ -228,8 +292,16 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
   useEffect(() => {
     let active = true;
     setHydrated(false);
-    void loadLocalBoardState(boardId).then((local) => {
+    void Promise.all([
+      loadLocalBoardState(boardId),
+      loadRoamingCapability(boardId),
+    ]).then(([local, capability]) => {
       if (!active) return;
+      roamingCapabilityRef.current = capability;
+      if (capability) {
+        setSyncMode('roaming');
+        setRelayCount(capability.relays.length);
+      }
       applyState(local.snapshot, local.operations);
       setHydrated(true);
       if (isOnline) {
@@ -290,6 +362,8 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     flushing,
     pendingCount,
     failedCount,
+    syncMode,
+    relayCount,
     lastError,
     refresh,
     retryFailed,
@@ -297,7 +371,9 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
       if (!snapshotRef.current) throw new Error('Доска ещё не загружена.');
       const createdAt = now();
       const tempCard = createTemporaryCard({
-        id: `local-card-${Crypto.randomUUID()}`,
+        id: roamingCapabilityRef.current
+          ? Crypto.randomUUID()
+          : `local-card-${Crypto.randomUUID()}`,
         boardId,
         columnId: input.columnId,
         title: input.title,
@@ -345,9 +421,11 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     lastError,
     operations,
     pendingCount,
+    relayCount,
     refresh,
     refreshing,
     retryFailed,
     snapshot,
+    syncMode,
   ]);
 }

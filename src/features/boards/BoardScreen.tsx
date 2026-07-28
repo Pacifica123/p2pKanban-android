@@ -164,7 +164,9 @@ export function BoardScreen({ navigation, route }: Props) {
   let syncText = 'Синхронизировано';
   let syncTone: 'neutral' | 'danger' | 'warning' | 'success' = 'success';
   if (!isOnline) {
-    syncText = 'Нет связи · изменения сохраняются на устройстве';
+    syncText = runtime.syncMode === 'roaming'
+      ? 'Нет интернета · доска работает локально'
+      : 'Нет связи · изменения сохраняются на устройстве';
     syncTone = 'warning';
   } else if (runtime.failedCount) {
     syncText = `${runtime.failedCount} изменений требуют проверки`;
@@ -175,6 +177,9 @@ export function BoardScreen({ navigation, route }: Props) {
   } else if (runtime.pendingCount) {
     syncText = `${runtime.pendingCount} изменений сохранено на устройстве`;
     syncTone = 'warning';
+  } else if (runtime.syncMode === 'roaming') {
+    syncText = `Независимая синхронизация · ${runtime.relayCount} релея`;
+    syncTone = 'success';
   }
 
   if (!runtime.hydrated && !snapshot) {
@@ -192,7 +197,9 @@ export function BoardScreen({ navigation, route }: Props) {
         <ScreenHeader title={boardName} onBack={() => navigation.goBack()} />
         <StateView
           title="Доска не сохранена на устройстве"
-          description={isOnline ? runtime.lastError || 'Не удалось загрузить доску.' : 'Подключитесь к узлу хотя бы один раз.'}
+          description={isOnline
+            ? runtime.lastError || 'Не удалось получить локальную или relay-копию доски.'
+            : 'Подключитесь к интернету или откройте доску после первичной привязки.'}
           action={isOnline ? <Button label="Повторить" onPress={() => void runtime.refresh()} /> : undefined}
         />
       </Screen>
@@ -319,7 +326,8 @@ export function BoardScreen({ navigation, route }: Props) {
           >
             <Text style={[styles.addColumnTitle, { color: colors.text }]}>Следующая колонка</Text>
             <Text style={[styles.addColumnText, { color: colors.muted }]}>
-              Колонки создаются на узле и затем доступны всем участникам.
+              В этой версии колонки создаются через локальный узел; карточки уже
+              синхронизируются независимо через зашифрованный журнал.
             </Text>
             <Button
               label="Добавить колонку"

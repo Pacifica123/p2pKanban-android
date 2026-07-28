@@ -162,3 +162,16 @@ export interface SyncStatusResponse {
   maxServerOrder?: number | null;
   replica?: Replica | null;
 }
+
+export interface RoamingCapabilityResponse {
+  formatVersion: 1;
+  protocolVersion: 'p2p-kanban-roaming/1';
+  workspaceId: string;
+  boardId: string;
+  boardTag: string;
+  boardKey: string;
+  relays: string[];
+  eventKind: number;
+  minimumRelayAcks: number;
+  provisionedAt: string;
+}

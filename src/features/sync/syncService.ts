@@ -29,7 +29,7 @@ export async function ensureMobileReplica() {
     replicaKey,
     displayName: 'p2pKanban Android',
     platform: 'android',
-    appVersion: '1.0.0-mobile.1',
+    appVersion: '1.2.0-mobile.3',
   });
   await writeSessionJson(REPLICA_KEY, response.replica);
   return response.replica;
