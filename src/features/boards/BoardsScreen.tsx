@@ -21,6 +21,10 @@ import {
   ScreenHeader,
   StateView,
 } from '../../shared/ui/primitives';
+import {
+  primeWorkspaceBoards,
+  type PrimeBoardsResult,
+} from '../roaming/primeBoards';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Boards'>;
 
@@ -34,6 +38,9 @@ export function BoardsScreen({ navigation, route }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  const [primeState, setPrimeState] = useState<
+    { status: 'idle' | 'running' | 'done'; result: PrimeBoardsResult | null }
+  >({ status: 'idle', result: null });
 
   useEffect(() => {
     void loadCachedBoards(workspaceId).then(setCached);
@@ -66,6 +73,19 @@ export function BoardsScreen({ navigation, route }: Props) {
   });
 
   const items = query.data?.items ?? cached;
+  const boardIds = items.map((board) => board.id).join('|');
+
+  useEffect(() => {
+    if (!isOnline || !items.length) return;
+    let active = true;
+    setPrimeState({ status: 'running', result: null });
+    void primeWorkspaceBoards(workspaceId, items).then((result) => {
+      if (active) setPrimeState({ status: 'done', result });
+    });
+    return () => {
+      active = false;
+    };
+  }, [boardIds, isOnline, workspaceId]);
 
   return (
     <Screen scroll contentStyle={styles.screen}>
@@ -77,6 +97,18 @@ export function BoardsScreen({ navigation, route }: Props) {
 
       {!isOnline ? (
         <InlineNotice text="Нет связи. Открываются только сохранённые доски." tone="warning" />
+      ) : null}
+      {primeState.status === 'running' ? (
+        <InlineNotice
+          text="Готовим доски для работы без домашнего узла…"
+          tone="neutral"
+        />
+      ) : null}
+      {primeState.status === 'done' && primeState.result?.failed ? (
+        <InlineNotice
+          text={`${primeState.result.failed} досок пока не удалось подготовить. Повторим при следующей связи с узлом.`}
+          tone="warning"
+        />
       ) : null}
 
       <View style={styles.toolbar}>

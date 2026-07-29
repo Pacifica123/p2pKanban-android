@@ -55,6 +55,14 @@ function CardPreview({
   onPress: () => void;
 }) {
   const colors = useAppColors();
+  const checklistItems = card.checklistItemCount || 0;
+  const completedChecklistItems = Math.min(
+    card.checklistCompletedItemCount || 0,
+    checklistItems,
+  );
+  const checklistProgress = checklistItems
+    ? completedChecklistItems / checklistItems
+    : 0;
   return (
     <Pressable
       onPress={onPress}
@@ -72,6 +80,24 @@ function CardPreview({
         <Text style={[styles.cardDescription, { color: colors.muted }]} numberOfLines={3}>
           {card.description}
         </Text>
+      ) : null}
+      {checklistItems ? (
+        <View style={styles.cardProgress}>
+          <View style={[styles.cardProgressTrack, { backgroundColor: colors.border }]}>
+            <View
+              style={[
+                styles.cardProgressFill,
+                {
+                  backgroundColor: checklistProgress === 1 ? colors.success : colors.accent,
+                  width: `${Math.round(checklistProgress * 100)}%`,
+                },
+              ]}
+            />
+          </View>
+          <Text style={[styles.cardProgressText, { color: colors.muted }]}>
+            {completedChecklistItems}/{checklistItems}
+          </Text>
+        </View>
       ) : null}
       <View style={styles.cardMeta}>
         {card.status ? (
@@ -285,6 +311,15 @@ export function BoardScreen({ navigation, route }: Props) {
                   </Text>
                   <Text style={[styles.columnCount, { color: colors.muted }]}>{cards.length}</Text>
                 </View>
+                <Button
+                  label="Добавить карточку"
+                  compact
+                  variant="ghost"
+                  onPress={() => {
+                    setFormError(null);
+                    setCreateCardColumnId(column.id);
+                  }}
+                />
                 <ScrollView
                   style={styles.cardList}
                   contentContainerStyle={styles.cardListContent}
@@ -305,15 +340,6 @@ export function BoardScreen({ navigation, route }: Props) {
                     </Text>
                   ) : null}
                 </ScrollView>
-                <Button
-                  label="Добавить карточку"
-                  compact
-                  variant="ghost"
-                  onPress={() => {
-                    setFormError(null);
-                    setCreateCardColumnId(column.id);
-                  }}
-                />
               </View>
             );
           })}
@@ -476,6 +502,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+  },
+  cardProgress: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  cardProgressTrack: {
+    flex: 1,
+    height: 5,
+    overflow: 'hidden',
+    borderRadius: 999,
+  },
+  cardProgressFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  cardProgressText: {
+    minWidth: 30,
+    textAlign: 'right',
+    fontSize: 11,
+    fontWeight: '700',
   },
   metaText: {
     fontSize: 11,

@@ -62,6 +62,7 @@ async function identity() {
 }
 
 function fieldsFor(operation: LocalOperation) {
+  if (operation.kind === 'checklist.item.update') return ['checklists'];
   if (operation.kind === 'card.create') return ['*'];
   if (operation.kind === 'card.update') return Object.keys(operation.payload.input);
   if (operation.kind === 'card.move') return ['columnId', 'position', 'updatedAt'];
@@ -72,6 +73,7 @@ function eventForCard(input: {
   capability: RoamingCapability;
   operation: LocalOperation;
   card: Card;
+  checklists: LocalBoardSnapshot['checklistsByCardId'][string];
   replicaId: string;
   replicaSeq: number;
   logicalClock: number;
@@ -88,7 +90,10 @@ function eventForCard(input: {
     entityId: input.card.id,
     operation: 'card.put',
     fieldMask: fieldsFor(input.operation),
-    payload: { card: input.card },
+    payload: {
+      card: input.card,
+      checklists: input.checklists,
+    },
     occurredAt: input.operation.createdAt,
   };
 }
@@ -159,7 +164,10 @@ export async function publishLocalOperation(
   operation: LocalOperation,
   snapshot: LocalBoardSnapshot,
 ) {
-  const card = snapshot.cards.find((candidate) => candidate.id === operation.entityId);
+  const cardId = operation.kind === 'checklist.item.update'
+    ? operation.payload.cardId
+    : operation.entityId;
+  const card = snapshot.cards.find((candidate) => candidate.id === cardId);
   if (!card) throw new Error('Локальная карточка для события не найдена.');
   const { replicaId } = await identity();
   const logicalClock = operationSequence(operation);
@@ -167,6 +175,7 @@ export async function publishLocalOperation(
     capability,
     operation,
     card,
+    checklists: snapshot.checklistsByCardId[card.id] || [],
     replicaId,
     replicaSeq: logicalClock,
     logicalClock,

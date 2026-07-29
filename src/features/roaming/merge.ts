@@ -1,5 +1,8 @@
-import type { Card } from '../../shared/types/api';
-import type { LocalBoardSnapshot } from '../localFirst/model';
+import type { Card, Checklist } from '../../shared/types/api';
+import {
+  LOCAL_SCHEMA_VERSION,
+  type LocalBoardSnapshot,
+} from '../localFirst/model';
 import { compareVersion, stampOf } from './codec';
 import type {
   RoamingApplyState,
@@ -23,6 +26,7 @@ const CARD_FIELDS: Array<keyof Card> = [
   'archivedAt',
   'updatedAt',
 ];
+const CHECKLISTS_FIELD = 'checklists';
 
 export const EMPTY_ROAMING_APPLY_STATE: RoamingApplyState = {
   seenEventIds: [],
@@ -67,10 +71,16 @@ export function applyRoamingEvents(
           && candidate.workspaceId === event.workspaceId
           && candidate.board.id === event.boardId
         ) {
-          snapshot = candidate;
+          snapshot = {
+            ...candidate,
+            schemaVersion: LOCAL_SCHEMA_VERSION,
+            checklistsByCardId: candidate.checklistsByCardId || {},
+            checklistsHydratedAt: candidate.checklistsHydratedAt || null,
+          };
           const stamp = stampOf(event);
-          for (const card of candidate.cards) {
+          for (const card of snapshot.cards) {
             for (const field of CARD_FIELDS) versions[fieldKey(card.id, field)] = stamp;
+            versions[fieldKey(card.id, CHECKLISTS_FIELD)] = stamp;
           }
           applied += 1;
         }
@@ -80,6 +90,9 @@ export function applyRoamingEvents(
 
     if (!snapshot || event.operation !== 'card.put') continue;
     const incoming = event.payload.card as Card | undefined;
+    const incomingChecklists = Array.isArray(event.payload.checklists)
+      ? event.payload.checklists as Checklist[]
+      : null;
     if (!incoming || incoming.id !== event.entityId || incoming.boardId !== snapshot.board.id) {
       continue;
     }
@@ -88,10 +101,22 @@ export function applyRoamingEvents(
     const fields = event.fieldMask.includes('*')
       ? CARD_FIELDS
       : CARD_FIELDS.filter((field) => event.fieldMask.includes(field));
+    const includesChecklists = Boolean(
+      incomingChecklists
+      && (event.fieldMask.includes('*') || event.fieldMask.includes(CHECKLISTS_FIELD)),
+    );
     const existing = snapshot.cards.find((card) => card.id === incoming.id);
     if (!existing) {
-      snapshot = { ...snapshot, cards: [...snapshot.cards, incoming], cachedAt: event.occurredAt };
+      snapshot = {
+        ...snapshot,
+        cards: [...snapshot.cards, incoming],
+        checklistsByCardId: incomingChecklists
+          ? { ...snapshot.checklistsByCardId, [incoming.id]: incomingChecklists }
+          : snapshot.checklistsByCardId,
+        cachedAt: event.occurredAt,
+      };
       for (const field of CARD_FIELDS) versions[fieldKey(incoming.id, field)] = stamp;
+      if (incomingChecklists) versions[fieldKey(incoming.id, CHECKLISTS_FIELD)] = stamp;
       applied += 1;
       continue;
     }
@@ -111,6 +136,21 @@ export function applyRoamingEvents(
         cachedAt: event.occurredAt,
       };
       applied += 1;
+    }
+    if (
+      includesChecklists
+      && eventWins(versions, incoming.id, CHECKLISTS_FIELD, stamp)
+    ) {
+      snapshot = {
+        ...snapshot,
+        checklistsByCardId: {
+          ...snapshot.checklistsByCardId,
+          [incoming.id]: incomingChecklists || [],
+        },
+        cachedAt: event.occurredAt,
+      };
+      versions[fieldKey(incoming.id, CHECKLISTS_FIELD)] = stamp;
+      if (!changed) applied += 1;
     }
   }
 

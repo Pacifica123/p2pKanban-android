@@ -255,7 +255,8 @@ export function FormModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : spacing.sm}
         style={[styles.modalBackdrop, { backgroundColor: colors.overlay }]}
       >
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
@@ -264,7 +265,11 @@ export function FormModal({
             <Text style={[styles.modalTitle, { color: colors.text }]}>{title}</Text>
             <Button label="Закрыть" variant="ghost" compact onPress={onClose} />
           </View>
-          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalBody}>
+          <ScrollView
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalBody}
+          >
             {children}
           </ScrollView>
         </View>

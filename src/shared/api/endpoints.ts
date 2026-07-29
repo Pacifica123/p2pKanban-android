@@ -5,6 +5,8 @@ import type {
   BoardListResponse,
   Card,
   CardListResponse,
+  ChecklistItem,
+  ChecklistListResponse,
   ColumnListResponse,
   NativeAuthSuccessResponse,
   Replica,
@@ -101,6 +103,20 @@ export function createColumn(boardId: string, input: { name: string; position?: 
 
 export function getCards(boardId: string) {
   return apiRequest<CardListResponse>(`/boards/${boardId}/cards`);
+}
+
+export function getChecklists(cardId: string) {
+  return apiRequest<ChecklistListResponse>(`/cards/${cardId}/checklists`);
+}
+
+export function updateChecklistItem(
+  itemId: string,
+  input: { isDone: boolean },
+) {
+  return apiRequest<ChecklistItem>(`/checklist-items/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
 }
 
 export function createCard(boardId: string, input: {

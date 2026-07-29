@@ -6,14 +6,12 @@ import { ApiError, isNetworkError } from '../../shared/api/client';
 import {
   archiveCard,
   createCard,
-  getBoard,
-  getCards,
-  getColumns,
   moveCard,
   provisionRoamingBoard,
   updateCard,
+  updateChecklistItem,
 } from '../../shared/api/endpoints';
-import type { Card } from '../../shared/types/api';
+import type { Card, Checklist } from '../../shared/types/api';
 import {
   installRoamingCapability,
   loadRoamingCapability,
@@ -24,10 +22,10 @@ import {
 import type { RoamingCapability } from '../roaming/types';
 import { touchWorkspaceSync } from '../sync/syncService';
 import {
-  LOCAL_SCHEMA_VERSION,
   applyOperation,
   createTemporaryCard,
   isTemporaryCardId,
+  replaceChecklistItem,
   replaceCreatedCard,
   type LocalBoardSnapshot,
   type LocalOperation,
@@ -38,6 +36,7 @@ import {
   persistBoardAndQueue,
   persistServerSnapshot,
 } from './repository';
+import { fetchBoardSnapshot } from './snapshot';
 
 export interface LocalBoardRuntime {
   snapshot: LocalBoardSnapshot | null;
@@ -64,6 +63,13 @@ export interface LocalBoardRuntime {
   >>) => Promise<void>;
   moveCard: (cardId: string, targetColumnId: string) => Promise<void>;
   archiveCard: (cardId: string) => Promise<void>;
+  getCardChecklists: (cardId: string) => Checklist[];
+  toggleChecklistItem: (
+    cardId: string,
+    checklistId: string,
+    itemId: string,
+    isDone: boolean,
+  ) => Promise<void>;
   cardOperationState: (cardId: string) => 'pending' | 'failed' | null;
 }
 
@@ -146,21 +152,10 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
         }
 
         await touchWorkspaceSync(workspaceId).catch(() => null);
-        const [board, columns, cards, allOperations] = await Promise.all([
-          getBoard(boardId),
-          getColumns(boardId),
-          getCards(boardId),
+        const [seeded, allOperations] = await Promise.all([
+          fetchBoardSnapshot(boardId, workspaceId),
           loadOperationQueue(),
         ]);
-        const seeded: LocalBoardSnapshot = {
-          schemaVersion: LOCAL_SCHEMA_VERSION,
-          workspaceId,
-          board,
-          columns: columns.items.sort((left, right) => left.position - right.position),
-          cards: cards.items,
-          cachedAt: now(),
-          lastServerRefreshAt: now(),
-        };
         const merged = await persistServerSnapshot(seeded, allOperations);
         applyState(merged, allOperations);
 
@@ -247,6 +242,17 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
                 ...currentSnapshot,
                 cards: currentSnapshot.cards.map((card) => card.id === moved.id ? moved : card),
               };
+              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
+            } else if (current.kind === 'checklist.item.update') {
+              const updated = await updateChecklistItem(
+                current.entityId,
+                current.payload.input,
+              );
+              currentSnapshot = replaceChecklistItem(
+                currentSnapshot,
+                current.payload.cardId,
+                updated,
+              );
               allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
             } else {
               if (isTemporaryCardId(current.entityId)) {
@@ -405,6 +411,16 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
       ...operationBase(boardId, cardId),
       kind: 'card.archive',
       payload: {},
+    }),
+    getCardChecklists: (cardId) => snapshotRef.current?.checklistsByCardId[cardId] || [],
+    toggleChecklistItem: async (cardId, checklistId, itemId, isDone) => enqueue({
+      ...operationBase(boardId, itemId),
+      kind: 'checklist.item.update',
+      payload: {
+        cardId,
+        checklistId,
+        input: { isDone },
+      },
     }),
     cardOperationState: (cardId) => {
       const related = operations.filter((operation) => operation.entityId === cardId);

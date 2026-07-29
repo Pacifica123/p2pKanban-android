@@ -30,8 +30,23 @@ export async function loadOperationQueue() {
 
 export async function loadBoardSnapshot(boardId: string) {
   const raw = await AsyncStorage.getItem(sessionStorageKey(snapshotSuffix(boardId)));
-  const snapshot = parse<LocalBoardSnapshot | null>(raw, null);
-  return snapshot?.schemaVersion === LOCAL_SCHEMA_VERSION ? snapshot : null;
+  const snapshot = parse<(Omit<
+    LocalBoardSnapshot,
+    'schemaVersion' | 'checklistsByCardId' | 'checklistsHydratedAt'
+  > & {
+    schemaVersion: number;
+    checklistsByCardId?: LocalBoardSnapshot['checklistsByCardId'];
+    checklistsHydratedAt?: string | null;
+  }) | null>(raw, null);
+  if (!snapshot || !snapshot.board?.id) return null;
+  if (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== LOCAL_SCHEMA_VERSION) return null;
+  const migrated: LocalBoardSnapshot = {
+    ...snapshot,
+    schemaVersion: LOCAL_SCHEMA_VERSION,
+    checklistsByCardId: snapshot.checklistsByCardId || {},
+    checklistsHydratedAt: snapshot.checklistsHydratedAt || null,
+  };
+  return migrated;
 }
 
 export async function loadLocalBoardState(boardId: string) {

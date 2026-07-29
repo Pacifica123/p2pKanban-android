@@ -37,6 +37,8 @@ function snapshot(): LocalBoardSnapshot {
     },
     columns: [],
     cards: [card('исходная')],
+    checklistsByCardId: {},
+    checklistsHydratedAt: '2026-07-28T10:00:00.000Z',
     cachedAt: '2026-07-28T10:00:00.000Z',
     lastServerRefreshAt: null,
   };
@@ -74,4 +76,37 @@ test('replica id deterministically resolves parallel events', () => {
     event(9, 'replica-b', 'B'),
   ]);
   expect(result.snapshot?.cards[0]?.title).toBe('B');
+});
+
+test('roaming card bundle carries checklist items', () => {
+  const checklistEvent = event(10, 'replica-a', 'исходная');
+  checklistEvent.fieldMask = ['checklists'];
+  checklistEvent.payload = {
+    card: card('исходная'),
+    checklists: [{
+      id: '018f22e2-355a-7ba2-8ef0-d7bc788ceecd',
+      cardId,
+      title: 'Релиз',
+      position: 1000,
+      createdAt: '2026-07-28T10:00:00.000Z',
+      updatedAt: '2026-07-28T12:00:00.000Z',
+      items: [{
+        id: '018f22e2-355a-7ba2-8ef0-d7bc788ceece',
+        checklistId: '018f22e2-355a-7ba2-8ef0-d7bc788ceecd',
+        title: 'Проверить APK',
+        isDone: true,
+        position: 1000,
+        completedAt: '2026-07-28T12:00:00.000Z',
+        createdAt: '2026-07-28T10:00:00.000Z',
+        updatedAt: '2026-07-28T12:00:00.000Z',
+      }],
+    }],
+  };
+
+  const result = applyRoamingEvents(
+    snapshot(),
+    EMPTY_ROAMING_APPLY_STATE,
+    [checklistEvent],
+  );
+  expect(result.snapshot?.checklistsByCardId[cardId]?.[0]?.items[0]?.isDone).toBe(true);
 });

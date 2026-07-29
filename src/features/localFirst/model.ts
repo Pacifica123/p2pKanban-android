@@ -1,6 +1,12 @@
-import type { Board, BoardColumn, Card } from '../../shared/types/api';
+import type {
+  Board,
+  BoardColumn,
+  Card,
+  Checklist,
+  ChecklistItem,
+} from '../../shared/types/api';
 
-export const LOCAL_SCHEMA_VERSION = 1;
+export const LOCAL_SCHEMA_VERSION = 2;
 
 export interface LocalBoardSnapshot {
   schemaVersion: typeof LOCAL_SCHEMA_VERSION;
@@ -8,6 +14,8 @@ export interface LocalBoardSnapshot {
   board: Board;
   columns: BoardColumn[];
   cards: Card[];
+  checklistsByCardId: Record<string, Checklist[]>;
+  checklistsHydratedAt: string | null;
   cachedAt: string;
   lastServerRefreshAt: string | null;
 }
@@ -61,11 +69,59 @@ export interface ArchiveCardOperation extends OperationBase {
   payload: Record<string, never>;
 }
 
+export interface UpdateChecklistItemOperation extends OperationBase {
+  kind: 'checklist.item.update';
+  payload: {
+    cardId: string;
+    checklistId: string;
+    input: {
+      isDone: boolean;
+    };
+  };
+}
+
 export type LocalOperation =
   | CreateCardOperation
   | UpdateCardOperation
   | MoveCardOperation
-  | ArchiveCardOperation;
+  | ArchiveCardOperation
+  | UpdateChecklistItemOperation;
+
+function checklistCounts(checklists: Checklist[]) {
+  const items = checklists.flatMap((checklist) => checklist.items);
+  return {
+    checklistCount: checklists.length,
+    checklistItemCount: items.length,
+    checklistCompletedItemCount: items.filter((item) => item.isDone).length,
+  };
+}
+
+export function replaceChecklistItem(
+  snapshot: LocalBoardSnapshot,
+  cardId: string,
+  item: ChecklistItem,
+) {
+  const checklists = (snapshot.checklistsByCardId[cardId] || []).map((checklist) => (
+    checklist.id === item.checklistId
+      ? {
+        ...checklist,
+        items: checklist.items.map((candidate) => candidate.id === item.id ? item : candidate),
+        updatedAt: item.updatedAt,
+      }
+      : checklist
+  ));
+  return {
+    ...snapshot,
+    cards: snapshot.cards.map((card) => card.id === cardId
+      ? { ...card, ...checklistCounts(checklists), updatedAt: item.updatedAt }
+      : card),
+    checklistsByCardId: {
+      ...snapshot.checklistsByCardId,
+      [cardId]: checklists,
+    },
+    cachedAt: item.updatedAt,
+  };
+}
 
 function nextPosition(cards: Card[], columnId: string) {
   return cards
@@ -74,6 +130,37 @@ function nextPosition(cards: Card[], columnId: string) {
 }
 
 export function applyOperation(snapshot: LocalBoardSnapshot, operation: LocalOperation) {
+  if (operation.kind === 'checklist.item.update') {
+    const timestamp = operation.createdAt;
+    const checklists = (snapshot.checklistsByCardId[operation.payload.cardId] || []).map(
+      (checklist) => checklist.id === operation.payload.checklistId
+        ? {
+          ...checklist,
+          updatedAt: timestamp,
+          items: checklist.items.map((item) => item.id === operation.entityId
+            ? {
+              ...item,
+              isDone: operation.payload.input.isDone,
+              completedAt: operation.payload.input.isDone ? timestamp : null,
+              updatedAt: timestamp,
+            }
+            : item),
+        }
+        : checklist,
+    );
+    return {
+      ...snapshot,
+      cards: snapshot.cards.map((card) => card.id === operation.payload.cardId
+        ? { ...card, ...checklistCounts(checklists), updatedAt: timestamp }
+        : card),
+      checklistsByCardId: {
+        ...snapshot.checklistsByCardId,
+        [operation.payload.cardId]: checklists,
+      },
+      cachedAt: timestamp,
+    };
+  }
+
   if (operation.kind === 'card.create') {
     const exists = snapshot.cards.some((card) => card.id === operation.payload.tempCard.id);
     return {
@@ -175,6 +262,7 @@ export function createTemporaryCard(input: {
     isArchived: false,
     labelIds: [],
     checklistCount: 0,
+    checklistItemCount: 0,
     checklistCompletedItemCount: 0,
     commentCount: 0,
     createdByUserId: null,

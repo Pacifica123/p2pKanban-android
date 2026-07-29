@@ -108,6 +108,7 @@ export interface Card {
   isArchived: boolean;
   labelIds?: string[];
   checklistCount?: number;
+  checklistItemCount?: number;
   checklistCompletedItemCount?: number;
   commentCount?: number;
   createdByUserId?: string | null;
@@ -119,6 +120,31 @@ export interface Card {
 export interface CardListResponse {
   items: Card[];
   pageInfo: PageInfo;
+}
+
+export interface ChecklistItem {
+  id: string;
+  checklistId: string;
+  title: string;
+  isDone: boolean;
+  position: number;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Checklist {
+  id: string;
+  cardId: string;
+  title: string;
+  position: number;
+  items: ChecklistItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChecklistListResponse {
+  items: Checklist[];
 }
 
 export interface ActivityActor {

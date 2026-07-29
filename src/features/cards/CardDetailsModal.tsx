@@ -83,7 +83,9 @@ export function CardDetailsModal({
   const [priority, setPriority] = useState<CardPriority>(null);
   const [columnId, setColumnId] = useState('');
   const [saving, setSaving] = useState(false);
+  const [togglingItemId, setTogglingItemId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const checklists = card ? runtime.getCardChecklists(card.id) : [];
 
   useEffect(() => {
     if (!card) return;
@@ -137,6 +139,23 @@ export function CardDetailsModal({
     );
   }
 
+  async function toggleItem(
+    checklistId: string,
+    itemId: string,
+    isDone: boolean,
+  ) {
+    if (!card || togglingItemId) return;
+    setTogglingItemId(itemId);
+    setError(null);
+    try {
+      await runtime.toggleChecklistItem(card.id, checklistId, itemId, isDone);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Не удалось изменить пункт чек-листа.');
+    } finally {
+      setTogglingItemId(null);
+    }
+  }
+
   return (
     <FormModal visible={Boolean(card)} title="Карточка" onClose={onClose}>
       <Field label="Название" value={title} onChangeText={setTitle} />
@@ -147,6 +166,69 @@ export function CardDetailsModal({
         multiline
         placeholder="Что нужно сделать"
       />
+
+      {checklists.length ? (
+        <View style={styles.section}>
+          <SectionTitle
+            title="Чек-листы"
+            detail={`${checklists.reduce((sum, checklist) => sum + checklist.items.filter((item) => item.isDone).length, 0)}/${checklists.reduce((sum, checklist) => sum + checklist.items.length, 0)}`}
+          />
+          {checklists.map((checklist) => (
+            <View
+              key={checklist.id}
+              style={[
+                styles.checklist,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.checklistTitle, { color: colors.text }]}>
+                {checklist.title}
+              </Text>
+              {checklist.items.length ? checklist.items.map((item) => (
+                <Pressable
+                  key={item.id}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: item.isDone, disabled: Boolean(togglingItemId) }}
+                  onPress={() => void toggleItem(checklist.id, item.id, !item.isDone)}
+                  style={({ pressed }) => [
+                    styles.checklistItem,
+                    { opacity: pressed || togglingItemId === item.id ? 0.58 : 1 },
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.checkbox,
+                      {
+                        backgroundColor: item.isDone ? colors.accent : 'transparent',
+                        borderColor: item.isDone ? colors.accent : colors.border,
+                      },
+                    ]}
+                  >
+                    {item.isDone ? (
+                      <Text style={[styles.checkboxMark, { color: colors.background }]}>✓</Text>
+                    ) : null}
+                  </View>
+                  <Text
+                    style={[
+                      styles.checklistItemText,
+                      {
+                        color: item.isDone ? colors.muted : colors.text,
+                        textDecorationLine: item.isDone ? 'line-through' : 'none',
+                      },
+                    ]}
+                  >
+                    {item.title}
+                  </Text>
+                </Pressable>
+              )) : (
+                <Text style={[styles.emptyChecklist, { color: colors.muted }]}>
+                  В этом чек-листе пока нет пунктов
+                </Text>
+              )}
+            </View>
+          ))}
+        </View>
+      ) : null}
 
       <View style={styles.section}>
         <SectionTitle title="Статус" />
@@ -251,5 +333,43 @@ const styles = StyleSheet.create({
   columnChoiceText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  checklist: {
+    gap: spacing.xs,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.sm,
+  },
+  checklistTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: spacing.xs,
+  },
+  checklistItem: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 6,
+  },
+  checkboxMark: {
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  checklistItemText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  emptyChecklist: {
+    fontSize: 12,
+    lineHeight: 17,
   },
 });

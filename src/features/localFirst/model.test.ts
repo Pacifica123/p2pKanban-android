@@ -41,6 +41,8 @@ function snapshot(cards: Card[] = []): LocalBoardSnapshot {
     board,
     columns: [columnA, columnB],
     cards,
+    checklistsByCardId: {},
+    checklistsHydratedAt: board.updatedAt,
     cachedAt: board.updatedAt,
     lastServerRefreshAt: board.updatedAt,
   };
@@ -145,5 +147,58 @@ describe('local-first reducer', () => {
     const result = replaceCreatedCard(snapshot([temp]), operations, temp.id, serverCard);
     expect(result.snapshot.cards[0]?.id).toBe(serverCard.id);
     expect(result.operations.every((operation) => operation.entityId === serverCard.id)).toBe(true);
+  });
+
+  it('toggles a checklist item in the local snapshot', () => {
+    const localCard = createTemporaryCard({
+      id: 'card-with-checklist',
+      boardId: board.id,
+      columnId: columnA.id,
+      title: 'Карточка с чек-листом',
+      cards: [],
+      now: board.updatedAt,
+    });
+    const initial = snapshot([localCard]);
+    initial.checklistsByCardId[localCard.id] = [{
+      id: 'checklist-1',
+      cardId: localCard.id,
+      title: 'Проверки',
+      position: 1000,
+      createdAt: board.createdAt,
+      updatedAt: board.updatedAt,
+      items: [{
+        id: 'item-1',
+        checklistId: 'checklist-1',
+        title: 'Собрать APK',
+        isDone: false,
+        position: 1000,
+        completedAt: null,
+        createdAt: board.createdAt,
+        updatedAt: board.updatedAt,
+      }],
+    }];
+    const operation: LocalOperation = {
+      id: 'op-checklist-1',
+      boardId: board.id,
+      entityId: 'item-1',
+      kind: 'checklist.item.update',
+      status: 'pending',
+      createdAt: '2026-07-26T10:04:00Z',
+      attempts: 0,
+      lastError: null,
+      payload: {
+        cardId: localCard.id,
+        checklistId: 'checklist-1',
+        input: { isDone: true },
+      },
+    };
+
+    const result = applyOperations(initial, [operation]);
+    expect(result.checklistsByCardId[localCard.id]?.[0]?.items[0]?.isDone).toBe(true);
+    expect(result.cards[0]).toMatchObject({
+      checklistCount: 1,
+      checklistItemCount: 1,
+      checklistCompletedItemCount: 1,
+    });
   });
 });
