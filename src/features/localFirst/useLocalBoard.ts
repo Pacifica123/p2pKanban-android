@@ -4,14 +4,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNetwork } from '../../app/NetworkProvider';
 import { ApiError, isNetworkError } from '../../shared/api/client';
 import {
-  archiveCard,
-  createCard,
-  moveCard,
+  archiveCard as archiveCardRemote,
+  createCard as createCardRemote,
+  createChecklist as createChecklistRemote,
+  createChecklistItem as createChecklistItemRemote,
+  deleteCard as deleteCardRemote,
+  deleteChecklist as deleteChecklistRemote,
+  deleteChecklistItem as deleteChecklistItemRemote,
+  moveCard as moveCardRemote,
   provisionRoamingBoard,
-  updateCard,
-  updateChecklistItem,
+  unarchiveCard as unarchiveCardRemote,
+  updateCard as updateCardRemote,
+  updateChecklist as updateChecklistRemote,
+  updateChecklistItem as updateChecklistItemRemote,
 } from '../../shared/api/endpoints';
-import type { Card, Checklist } from '../../shared/types/api';
+import type { Card, Checklist, ChecklistItem } from '../../shared/types/api';
 import {
   installRoamingCapability,
   loadRoamingCapability,
@@ -23,10 +30,22 @@ import type { RoamingCapability } from '../roaming/types';
 import { touchWorkspaceSync } from '../sync/syncService';
 import {
   applyOperation,
+  applyOperations,
   createTemporaryCard,
+  createTemporaryChecklist,
+  createTemporaryChecklistItem,
+  isChecklistOperation,
   isTemporaryCardId,
+  isTemporaryChecklistId,
+  isTemporaryChecklistItemId,
+  mergeBoardSnapshots,
+  operationAffectsCard,
+  operationCardId,
+  replaceChecklist,
   replaceChecklistItem,
   replaceCreatedCard,
+  replaceCreatedChecklist,
+  replaceCreatedChecklistItem,
   type LocalBoardSnapshot,
   type LocalOperation,
 } from './model';
@@ -61,9 +80,35 @@ export interface LocalBoardRuntime {
     Card,
     'title' | 'description' | 'status' | 'priority' | 'startAt' | 'dueAt' | 'completedAt'
   >>) => Promise<void>;
-  moveCard: (cardId: string, targetColumnId: string) => Promise<void>;
+  moveCard: (
+    cardId: string,
+    targetColumnId: string,
+    position?: number | null,
+  ) => Promise<void>;
   archiveCard: (cardId: string) => Promise<void>;
+  unarchiveCard: (cardId: string) => Promise<void>;
+  deleteCard: (cardId: string) => Promise<void>;
+  mergeCoordinatorCard: (card: Card) => Promise<void>;
   getCardChecklists: (cardId: string) => Checklist[];
+  createChecklist: (cardId: string, title: string) => Promise<void>;
+  updateChecklist: (cardId: string, checklistId: string, title: string) => Promise<void>;
+  deleteChecklist: (cardId: string, checklistId: string) => Promise<void>;
+  createChecklistItem: (
+    cardId: string,
+    checklistId: string,
+    title: string,
+  ) => Promise<void>;
+  updateChecklistItem: (
+    cardId: string,
+    checklistId: string,
+    itemId: string,
+    input: { title?: string; position?: number | null; isDone?: boolean | null },
+  ) => Promise<void>;
+  deleteChecklistItem: (
+    cardId: string,
+    checklistId: string,
+    itemId: string,
+  ) => Promise<void>;
   toggleChecklistItem: (
     cardId: string,
     checklistId: string,
@@ -93,6 +138,48 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : 'Не удалось синхронизировать изменения.';
 }
 
+function coordinatorUnavailable(error: unknown) {
+  return isNetworkError(error)
+    || (error instanceof ApiError && [408, 502, 503, 504].includes(error.status));
+}
+
+function canPublishThroughRoaming(operation: LocalOperation) {
+  if (isTemporaryCardId(operationCardId(operation))) return false;
+  if (isTemporaryChecklistId(operation.entityId)) return false;
+  if (isTemporaryChecklistItemId(operation.entityId)) return false;
+  if (
+    isChecklistOperation(operation)
+    && 'checklistId' in operation.payload
+    && isTemporaryChecklistId(operation.payload.checklistId)
+  ) return false;
+  return true;
+}
+
+function replaceCardInSnapshot(snapshot: LocalBoardSnapshot, card: Card) {
+  return {
+    ...snapshot,
+    cards: snapshot.cards.map((candidate) => candidate.id === card.id ? card : candidate),
+    cachedAt: card.updatedAt,
+  };
+}
+
+function removeCardFromSnapshot(snapshot: LocalBoardSnapshot, cardId: string) {
+  const checklistsByCardId = { ...snapshot.checklistsByCardId };
+  delete checklistsByCardId[cardId];
+  return {
+    ...snapshot,
+    cards: snapshot.cards.filter((card) => card.id !== cardId),
+    checklistsByCardId,
+    cachedAt: now(),
+  };
+}
+
+function nextCardPosition(snapshot: LocalBoardSnapshot, columnId: string, cardId: string) {
+  return snapshot.cards
+    .filter((card) => card.columnId === columnId && card.id !== cardId && !card.isArchived)
+    .reduce((highest, card) => Math.max(highest, card.position), 0) + 1000;
+}
+
 export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardRuntime {
   const { isOnline } = useNetwork();
   const [snapshot, setSnapshot] = useState<LocalBoardSnapshot | null>(null);
@@ -108,6 +195,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
   const roamingCapabilityRef = useRef<RoamingCapability | null>(null);
   const flushLock = useRef(false);
   const storageChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const nodeUnavailableUntilRef = useRef(0);
 
   const runSerialized = useCallback(<T>(task: () => Promise<T>) => {
     const run = storageChainRef.current.then(task, task);
@@ -115,7 +203,10 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     return run;
   }, []);
 
-  const applyState = useCallback((nextSnapshot: LocalBoardSnapshot | null, nextOperations: LocalOperation[]) => {
+  const applyState = useCallback((
+    nextSnapshot: LocalBoardSnapshot | null,
+    nextOperations: LocalOperation[],
+  ) => {
     snapshotRef.current = nextSnapshot;
     operationsRef.current = nextOperations;
     setSnapshot(nextSnapshot);
@@ -129,6 +220,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     let relaySucceeded = false;
     let relayReceived = 0;
     let relayFailure: unknown = null;
+    let relaySnapshot: LocalBoardSnapshot | null = null;
     try {
       await runSerialized(async () => {
         const storedCapability = roamingCapabilityRef.current
@@ -138,6 +230,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
           try {
             const relay = await pullRoamingBoard(storedCapability, snapshotRef.current);
             relayReceived = relay.received;
+            relaySnapshot = relay.snapshot;
             if (relay.snapshot) {
               const queued = await loadOperationQueue();
               await persistBoardAndQueue(relay.snapshot, queued);
@@ -151,35 +244,44 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
           }
         }
 
-        await touchWorkspaceSync(workspaceId).catch(() => null);
-        const [seeded, allOperations] = await Promise.all([
-          fetchBoardSnapshot(boardId, workspaceId),
-          loadOperationQueue(),
-        ]);
-        const merged = await persistServerSnapshot(seeded, allOperations);
-        applyState(merged, allOperations);
+        try {
+          await touchWorkspaceSync(workspaceId).catch(() => null);
+          const [seeded, allOperations] = await Promise.all([
+            fetchBoardSnapshot(boardId, workspaceId),
+            loadOperationQueue(),
+          ]);
+          nodeUnavailableUntilRef.current = 0;
+          const mergedBase = mergeBoardSnapshots(seeded, relaySnapshot);
+          const merged = await persistServerSnapshot(mergedBase, allOperations);
+          applyState(merged, allOperations);
 
-        if (roamingCapabilityRef.current && relayReceived === 0) {
-          await publishBoardSnapshot(roamingCapabilityRef.current, merged);
-          relaySucceeded = true;
-          setSyncMode('roaming');
-          setRelayCount(roamingCapabilityRef.current.relays.length);
-        } else if (!roamingCapabilityRef.current) {
-          try {
-            const capability = await provisionRoamingBoard(boardId);
-            await installRoamingCapability(capability);
-            roamingCapabilityRef.current = capability;
-            await publishBoardSnapshot(capability, merged);
-            setSyncMode('roaming');
-            setRelayCount(capability.relays.length);
+          if (roamingCapabilityRef.current && relayReceived === 0) {
+            await publishBoardSnapshot(roamingCapabilityRef.current, merged);
             relaySucceeded = true;
-          } catch {
-            // An older node simply keeps using the ordinary coordinator path.
+            setSyncMode('roaming');
+            setRelayCount(roamingCapabilityRef.current.relays.length);
+          } else if (!roamingCapabilityRef.current) {
+            try {
+              const capability = await provisionRoamingBoard(boardId);
+              await installRoamingCapability(capability);
+              roamingCapabilityRef.current = capability;
+              await publishBoardSnapshot(capability, merged);
+              setSyncMode('roaming');
+              setRelayCount(capability.relays.length);
+              relaySucceeded = true;
+            } catch {
+              // Узел без roaming продолжает работать как обычный координатор.
+            }
           }
+        } catch (error) {
+          if (coordinatorUnavailable(error)) {
+            nodeUnavailableUntilRef.current = Date.now() + 30_000;
+          }
+          if (!relaySucceeded) throw error;
         }
       });
     } catch (error) {
-      if (!relaySucceeded) setLastError(message(relayFailure || error));
+      setLastError(message(relayFailure || error));
     } finally {
       setRefreshing(false);
     }
@@ -194,84 +296,166 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     try {
       await runSerialized(async () => {
         let allOperations = await loadOperationQueue();
-        let currentSnapshot = snapshotRef.current;
-        if (!currentSnapshot) return;
+        const initialSnapshot = snapshotRef.current;
+        if (!initialSnapshot) return;
+        let currentSnapshot: LocalBoardSnapshot = initialSnapshot;
         const boardOperations = allOperations
           .filter((operation) => operation.boardId === boardId && operation.status === 'pending')
           .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
-        for (const operation of boardOperations) {
-          const current = allOperations.find((candidate) => candidate.id === operation.id);
+        for (const queuedOperation of boardOperations) {
+          const current = allOperations.find((candidate) => candidate.id === queuedOperation.id);
           if (!current || current.status !== 'pending') continue;
 
-          try {
-            const roamingCapability = roamingCapabilityRef.current
-              || await loadRoamingCapability(boardId);
-            if (roamingCapability && !isTemporaryCardId(current.entityId)) {
-              roamingCapabilityRef.current = roamingCapability;
-              await publishLocalOperation(roamingCapability, current, currentSnapshot);
-              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
-              setSyncMode('roaming');
-              setRelayCount(roamingCapability.relays.length);
-            } else if (current.kind === 'card.create') {
-              const created = await createCard(boardId, current.payload.input);
-              const replaced = replaceCreatedCard(
-                currentSnapshot,
-                allOperations,
-                current.entityId,
-                created,
-              );
-              currentSnapshot = replaced.snapshot;
-              allOperations = replaced.operations.filter((candidate) => candidate.id !== current.id);
-            } else if (current.kind === 'card.update') {
-              if (isTemporaryCardId(current.entityId)) {
-                throw new Error('Создание карточки ещё не отправлено.');
-              }
-              const updated = await updateCard(current.entityId, current.payload.input);
-              currentSnapshot = {
-                ...currentSnapshot,
-                cards: currentSnapshot.cards.map((card) => card.id === updated.id ? updated : card),
-              };
-              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
-            } else if (current.kind === 'card.move') {
-              if (isTemporaryCardId(current.entityId)) {
-                throw new Error('Создание карточки ещё не отправлено.');
-              }
-              const moved = await moveCard(current.entityId, current.payload.input);
-              currentSnapshot = {
-                ...currentSnapshot,
-                cards: currentSnapshot.cards.map((card) => card.id === moved.id ? moved : card),
-              };
-              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
-            } else if (current.kind === 'checklist.item.update') {
-              const updated = await updateChecklistItem(
-                current.entityId,
-                current.payload.input,
-              );
-              currentSnapshot = replaceChecklistItem(
-                currentSnapshot,
-                current.payload.cardId,
-                updated,
-              );
-              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
-            } else {
-              if (isTemporaryCardId(current.entityId)) {
-                throw new Error('Создание карточки ещё не отправлено.');
-              }
-              const archived = await archiveCard(current.entityId);
-              currentSnapshot = {
-                ...currentSnapshot,
-                cards: currentSnapshot.cards.map((card) => card.id === archived.id ? archived : card),
-              };
-              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
-            }
+          const capability = roamingCapabilityRef.current
+            || await loadRoamingCapability(boardId);
+          if (capability) roamingCapabilityRef.current = capability;
+
+          const publishFallback = async () => {
+            if (!capability || !canPublishThroughRoaming(current)) return false;
+            await publishLocalOperation(capability, current, currentSnapshot);
+            allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
             await persistBoardAndQueue(currentSnapshot, allOperations);
             applyState(currentSnapshot, allOperations);
-          } catch (error) {
-            if (roamingCapabilityRef.current || isNetworkError(error)) {
+            setSyncMode('roaming');
+            setRelayCount(capability.relays.length);
+            return true;
+          };
+
+          if (nodeUnavailableUntilRef.current > Date.now()) {
+            try {
+              if (await publishFallback()) continue;
+            } catch (error) {
               setLastError(message(error));
               break;
             }
+          }
+
+          try {
+            let relayOperation: LocalOperation = current;
+            let nextSnapshot: LocalBoardSnapshot = currentSnapshot;
+            let nextOperations = allOperations;
+
+            if (current.kind === 'card.create') {
+              const created = await createCardRemote(boardId, current.payload.input);
+              const replaced = replaceCreatedCard(
+                nextSnapshot,
+                nextOperations,
+                current.entityId,
+                created,
+              );
+              nextSnapshot = replaced.snapshot;
+              nextOperations = replaced.operations;
+              relayOperation = {
+                ...current,
+                entityId: created.id,
+                payload: { ...current.payload, tempCard: created },
+              };
+            } else if (current.kind === 'card.update') {
+              const updated = await updateCardRemote(current.entityId, current.payload.input);
+              nextSnapshot = replaceCardInSnapshot(nextSnapshot, updated);
+            } else if (current.kind === 'card.move') {
+              const moved = await moveCardRemote(current.entityId, current.payload.input);
+              nextSnapshot = replaceCardInSnapshot(nextSnapshot, moved);
+            } else if (current.kind === 'card.archive') {
+              const archived = await archiveCardRemote(current.entityId);
+              nextSnapshot = replaceCardInSnapshot(nextSnapshot, archived);
+            } else if (current.kind === 'card.unarchive') {
+              const restored = await unarchiveCardRemote(current.entityId);
+              nextSnapshot = replaceCardInSnapshot(nextSnapshot, restored);
+            } else if (current.kind === 'checklist.create') {
+              const created = await createChecklistRemote(
+                current.payload.cardId,
+                current.payload.input,
+              );
+              const replaced = replaceCreatedChecklist(
+                nextSnapshot,
+                nextOperations,
+                current.payload.cardId,
+                current.entityId,
+                created,
+              );
+              nextSnapshot = replaced.snapshot;
+              nextOperations = replaced.operations;
+              relayOperation = {
+                ...current,
+                entityId: created.id,
+                payload: { ...current.payload, tempChecklist: created },
+              };
+            } else if (current.kind === 'checklist.update') {
+              const updated = await updateChecklistRemote(
+                current.entityId,
+                current.payload.input,
+              );
+              nextSnapshot = replaceChecklist(nextSnapshot, current.payload.cardId, updated);
+            } else if (current.kind === 'checklist.delete') {
+              await deleteChecklistRemote(current.entityId);
+            } else if (current.kind === 'checklist.item.create') {
+              const created = await createChecklistItemRemote(
+                current.payload.checklistId,
+                current.payload.input,
+              );
+              const replaced = replaceCreatedChecklistItem(
+                nextSnapshot,
+                nextOperations,
+                current.payload.cardId,
+                current.entityId,
+                created,
+              );
+              nextSnapshot = replaced.snapshot;
+              nextOperations = replaced.operations;
+              relayOperation = {
+                ...current,
+                entityId: created.id,
+                payload: { ...current.payload, tempItem: created },
+              };
+            } else if (current.kind === 'checklist.item.update') {
+              const updated = await updateChecklistItemRemote(
+                current.entityId,
+                current.payload.input,
+              );
+              nextSnapshot = replaceChecklistItem(
+                nextSnapshot,
+                current.payload.cardId,
+                updated,
+              );
+            } else {
+              await deleteChecklistItemRemote(current.entityId);
+            }
+
+            nodeUnavailableUntilRef.current = 0;
+            nextOperations = nextOperations.filter((candidate) => candidate.id !== current.id);
+            nextSnapshot = applyOperations(
+              nextSnapshot,
+              nextOperations.filter((operation) => operation.boardId === boardId),
+            );
+            currentSnapshot = nextSnapshot;
+            allOperations = nextOperations;
+            await persistBoardAndQueue(currentSnapshot, allOperations);
+            applyState(currentSnapshot, allOperations);
+
+            if (capability && canPublishThroughRoaming(relayOperation)) {
+              void publishLocalOperation(
+                capability,
+                relayOperation,
+                currentSnapshot,
+              ).catch(() => null);
+            }
+          } catch (error) {
+            if (coordinatorUnavailable(error)) {
+              nodeUnavailableUntilRef.current = Date.now() + 30_000;
+              try {
+                if (await publishFallback()) continue;
+              } catch (relayError) {
+                setLastError(message(relayError));
+                break;
+              }
+              setLastError(
+                'Локальный узел недоступен, а это изменение ещё нельзя отправить через relay.',
+              );
+              break;
+            }
+
             const errorText = error instanceof ApiError && error.status === 403
               ? 'Изменение больше не разрешено. Проверьте доступ к пространству.'
               : message(error);
@@ -348,13 +532,15 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     if (!currentSnapshot) return;
     await runSerialized(async () => {
       const allOperations = await loadOperationQueue();
-      const next = allOperations.map((operation) => operation.boardId === boardId && operation.status === 'failed'
-        ? { ...operation, status: 'pending' as const, lastError: null }
-        : operation);
+      const next = allOperations.map((operation) =>
+        operation.boardId === boardId && operation.status === 'failed'
+          ? { ...operation, status: 'pending' as const, lastError: null }
+          : operation);
       const latestSnapshot = snapshotRef.current || currentSnapshot;
       await persistBoardAndQueue(latestSnapshot, next);
       applyState(latestSnapshot, next);
     });
+    nodeUnavailableUntilRef.current = 0;
     await flush();
   }, [applyState, boardId, flush, runSerialized]);
 
@@ -402,17 +588,137 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
       kind: 'card.update',
       payload: { input },
     }),
-    moveCard: async (cardId, targetColumnId) => enqueue({
-      ...operationBase(boardId, cardId),
-      kind: 'card.move',
-      payload: { input: { targetColumnId } },
-    }),
+    moveCard: async (cardId, targetColumnId, position) => {
+      const current = snapshotRef.current;
+      if (!current) throw new Error('Доска ещё не загружена.');
+      await enqueue({
+        ...operationBase(boardId, cardId),
+        kind: 'card.move',
+        payload: {
+          input: {
+            targetColumnId,
+            position: position ?? nextCardPosition(current, targetColumnId, cardId),
+          },
+        },
+      });
+    },
     archiveCard: async (cardId) => enqueue({
       ...operationBase(boardId, cardId),
       kind: 'card.archive',
       payload: {},
     }),
+    unarchiveCard: async (cardId) => enqueue({
+      ...operationBase(boardId, cardId),
+      kind: 'card.unarchive',
+      payload: {},
+    }),
+    deleteCard: async (cardId) => {
+      const current = snapshotRef.current;
+      if (!current) return;
+      const allOperations = await loadOperationQueue();
+      const isUnsyncedCreate = allOperations.some((operation) =>
+        operation.kind === 'card.create' && operation.entityId === cardId);
+      if (!isUnsyncedCreate) {
+        await deleteCardRemote(cardId);
+      }
+      await runSerialized(async () => {
+        const latestOperations = await loadOperationQueue();
+        const nextOperations = latestOperations.filter((operation) =>
+          !operationAffectsCard(operation, cardId));
+        const nextSnapshot = removeCardFromSnapshot(
+          snapshotRef.current || current,
+          cardId,
+        );
+        await persistBoardAndQueue(nextSnapshot, nextOperations);
+        applyState(nextSnapshot, nextOperations);
+      });
+    },
+    mergeCoordinatorCard: async (card) => {
+      const current = snapshotRef.current;
+      if (!current) return;
+      await runSerialized(async () => {
+        const allOperations = await loadOperationQueue();
+        const nextSnapshot = applyOperations(
+          replaceCardInSnapshot(snapshotRef.current || current, card),
+          allOperations.filter((operation) => operation.boardId === boardId),
+        );
+        await persistBoardAndQueue(nextSnapshot, allOperations);
+        applyState(nextSnapshot, allOperations);
+      });
+    },
     getCardChecklists: (cardId) => snapshotRef.current?.checklistsByCardId[cardId] || [],
+    createChecklist: async (cardId, title) => {
+      const current = snapshotRef.current;
+      if (!current) throw new Error('Доска ещё не загружена.');
+      const createdAt = now();
+      const tempChecklist = createTemporaryChecklist({
+        id: roamingCapabilityRef.current
+          ? Crypto.randomUUID()
+          : `local-checklist-${Crypto.randomUUID()}`,
+        cardId,
+        title,
+        checklists: current.checklistsByCardId[cardId] || [],
+        now: createdAt,
+      });
+      await enqueue({
+        ...operationBase(boardId, tempChecklist.id),
+        createdAt,
+        kind: 'checklist.create',
+        payload: {
+          cardId,
+          input: { title, position: tempChecklist.position },
+          tempChecklist,
+        },
+      });
+    },
+    updateChecklist: async (cardId, checklistId, title) => enqueue({
+      ...operationBase(boardId, checklistId),
+      kind: 'checklist.update',
+      payload: { cardId, input: { title } },
+    }),
+    deleteChecklist: async (cardId, checklistId) => enqueue({
+      ...operationBase(boardId, checklistId),
+      kind: 'checklist.delete',
+      payload: { cardId },
+    }),
+    createChecklistItem: async (cardId, checklistId, title) => {
+      const current = snapshotRef.current;
+      if (!current) throw new Error('Доска ещё не загружена.');
+      const checklist = (current.checklistsByCardId[cardId] || [])
+        .find((candidate) => candidate.id === checklistId);
+      if (!checklist) throw new Error('Чек-лист не найден.');
+      const createdAt = now();
+      const tempItem = createTemporaryChecklistItem({
+        id: roamingCapabilityRef.current
+          ? Crypto.randomUUID()
+          : `local-checklist-item-${Crypto.randomUUID()}`,
+        checklistId,
+        title,
+        items: checklist.items,
+        now: createdAt,
+      });
+      await enqueue({
+        ...operationBase(boardId, tempItem.id),
+        createdAt,
+        kind: 'checklist.item.create',
+        payload: {
+          cardId,
+          checklistId,
+          input: { title, position: tempItem.position },
+          tempItem,
+        },
+      });
+    },
+    updateChecklistItem: async (cardId, checklistId, itemId, input) => enqueue({
+      ...operationBase(boardId, itemId),
+      kind: 'checklist.item.update',
+      payload: { cardId, checklistId, input },
+    }),
+    deleteChecklistItem: async (cardId, checklistId, itemId) => enqueue({
+      ...operationBase(boardId, itemId),
+      kind: 'checklist.item.delete',
+      payload: { cardId, checklistId },
+    }),
     toggleChecklistItem: async (cardId, checklistId, itemId, isDone) => enqueue({
       ...operationBase(boardId, itemId),
       kind: 'checklist.item.update',
@@ -423,12 +729,14 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
       },
     }),
     cardOperationState: (cardId) => {
-      const related = operations.filter((operation) => operation.entityId === cardId);
+      const related = operations.filter((operation) =>
+        operationAffectsCard(operation, cardId));
       if (related.some((operation) => operation.status === 'failed')) return 'failed';
       if (related.some((operation) => operation.status === 'pending')) return 'pending';
       return null;
     },
   }), [
+    applyState,
     boardId,
     enqueue,
     failedCount,
@@ -441,6 +749,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     refresh,
     refreshing,
     retryFailed,
+    runSerialized,
     snapshot,
     syncMode,
   ]);

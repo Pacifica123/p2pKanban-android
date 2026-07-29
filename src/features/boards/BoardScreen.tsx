@@ -1,6 +1,8 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
+  Alert,
+  PanResponder,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,8 +14,12 @@ import {
 import { useNetwork } from '../../app/NetworkProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
-import { createColumn } from '../../shared/api/endpoints';
-import type { Card } from '../../shared/types/api';
+import {
+  createColumn,
+  deleteColumn,
+  updateColumn,
+} from '../../shared/api/endpoints';
+import type { BoardColumn, Card } from '../../shared/types/api';
 import {
   Button,
   Field,
@@ -25,6 +31,11 @@ import {
 } from '../../shared/ui/primitives';
 import { CardDetailsModal } from '../cards/CardDetailsModal';
 import { useLocalBoard } from '../localFirst/useLocalBoard';
+import {
+  getAppendPosition,
+  getDropColumnIndex,
+  getEdgeScrollOffset,
+} from './cardDrag';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Board'>;
 
@@ -45,14 +56,60 @@ const priorityLabels: Record<string, string> = {
   urgent: 'Срочно',
 };
 
+function DragHandle({
+  onStart,
+  onMove,
+  onEnd,
+  onCancel,
+}: {
+  onStart: (pageX: number, pageY: number) => void;
+  onMove: (pageX: number, pageY: number) => void;
+  onEnd: () => void;
+  onCancel: () => void;
+}) {
+  const colors = useAppColors();
+  const responder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderGrant: (event) => {
+      onStart(event.nativeEvent.pageX, event.nativeEvent.pageY);
+    },
+    onPanResponderMove: (event) => {
+      onMove(event.nativeEvent.pageX, event.nativeEvent.pageY);
+    },
+    onPanResponderRelease: onEnd,
+    onPanResponderTerminate: onCancel,
+    onPanResponderTerminationRequest: () => false,
+  }), [onCancel, onEnd, onMove, onStart]);
+
+  return (
+    <View
+      {...responder.panHandlers}
+      accessibilityRole="adjustable"
+      accessibilityLabel="Перетащить карточку"
+      style={[styles.dragHandle, { backgroundColor: colors.surfaceMuted }]}
+    >
+      <Text style={[styles.dragHandleText, { color: colors.muted }]}>≡</Text>
+    </View>
+  );
+}
+
 function CardPreview({
   card,
   operationState,
   onPress,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
 }: {
   card: Card;
   operationState: 'pending' | 'failed' | null;
   onPress: () => void;
+  onDragStart: (pageX: number, pageY: number) => void;
+  onDragMove: (pageX: number, pageY: number) => void;
+  onDragEnd: () => void;
+  onDragCancel: () => void;
 }) {
   const colors = useAppColors();
   const checklistItems = card.checklistItemCount || 0;
@@ -64,88 +121,123 @@ function CardPreview({
     ? completedChecklistItems / checklistItems
     : 0;
   return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
+    <View
+      style={[
         styles.card,
         {
           backgroundColor: colors.surface,
           borderColor: operationState === 'failed' ? colors.danger : colors.border,
-          opacity: pressed ? 0.72 : 1,
         },
       ]}
     >
-      <Text style={[styles.cardTitle, { color: colors.text }]}>{card.title}</Text>
-      {card.description ? (
-        <Text style={[styles.cardDescription, { color: colors.muted }]} numberOfLines={3}>
-          {card.description}
-        </Text>
-      ) : null}
-      {checklistItems ? (
-        <View style={styles.cardProgress}>
-          <View style={[styles.cardProgressTrack, { backgroundColor: colors.border }]}>
-            <View
-              style={[
-                styles.cardProgressFill,
-                {
-                  backgroundColor: checklistProgress === 1 ? colors.success : colors.accent,
-                  width: `${Math.round(checklistProgress * 100)}%`,
-                },
-              ]}
-            />
-          </View>
-          <Text style={[styles.cardProgressText, { color: colors.muted }]}>
-            {completedChecklistItems}/{checklistItems}
-          </Text>
-        </View>
-      ) : null}
-      <View style={styles.cardMeta}>
-        {card.status ? (
-          <Text style={[styles.metaText, { color: colors.muted }]}>
-            {statusLabels[card.status] || card.status}
-          </Text>
-        ) : null}
-        {card.priority ? (
-          <Text style={[styles.metaText, { color: card.priority === 'urgent' ? colors.danger : colors.muted }]}>
-            {priorityLabels[card.priority] || card.priority}
-          </Text>
-        ) : null}
-        {operationState ? (
-          <Text style={[styles.metaText, { color: operationState === 'failed' ? colors.danger : colors.warning }]}>
-            {operationState === 'failed' ? 'Нужна проверка' : 'На устройстве'}
-          </Text>
-        ) : null}
+      <View style={styles.cardHeader}>
+        <Pressable
+          onPress={onPress}
+          style={({ pressed }) => [styles.cardOpenArea, { opacity: pressed ? 0.68 : 1 }]}
+        >
+          <Text style={[styles.cardTitle, { color: colors.text }]}>{card.title}</Text>
+        </Pressable>
+        <DragHandle
+          onStart={onDragStart}
+          onMove={onDragMove}
+          onEnd={onDragEnd}
+          onCancel={onDragCancel}
+        />
       </View>
-    </Pressable>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [styles.cardBody, { opacity: pressed ? 0.68 : 1 }]}
+      >
+        {card.description ? (
+          <Text style={[styles.cardDescription, { color: colors.muted }]} numberOfLines={3}>
+            {card.description}
+          </Text>
+        ) : null}
+        {checklistItems ? (
+          <View style={styles.cardProgress}>
+            <View style={[styles.cardProgressTrack, { backgroundColor: colors.border }]}>
+              <View
+                style={[
+                  styles.cardProgressFill,
+                  {
+                    backgroundColor: checklistProgress === 1 ? colors.success : colors.accent,
+                    width: `${Math.round(checklistProgress * 100)}%`,
+                  },
+                ]}
+              />
+            </View>
+            <Text style={[styles.cardProgressText, { color: colors.muted }]}>
+              {completedChecklistItems}/{checklistItems}
+            </Text>
+          </View>
+        ) : null}
+        <View style={styles.cardMeta}>
+          {card.isArchived ? (
+            <Text style={[styles.metaText, { color: colors.warning }]}>В архиве</Text>
+          ) : null}
+          {card.status ? (
+            <Text style={[styles.metaText, { color: colors.muted }]}>
+              {statusLabels[card.status] || card.status}
+            </Text>
+          ) : null}
+          {card.priority ? (
+            <Text style={[styles.metaText, { color: card.priority === 'urgent' ? colors.danger : colors.muted }]}>
+              {priorityLabels[card.priority] || card.priority}
+            </Text>
+          ) : null}
+          {operationState ? (
+            <Text style={[styles.metaText, { color: operationState === 'failed' ? colors.danger : colors.warning }]}>
+              {operationState === 'failed' ? 'Нужна проверка' : 'На устройстве'}
+            </Text>
+          ) : null}
+        </View>
+      </Pressable>
+    </View>
   );
 }
 
 export function BoardScreen({ navigation, route }: Props) {
   const { workspaceId, boardId, boardName } = route.params;
   const colors = useAppColors();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const { isOnline } = useNetwork();
   const runtime = useLocalBoard(boardId, workspaceId);
+  const columnsScrollRef = useRef<ScrollView>(null);
+  const scrollOffsetRef = useRef(0);
+  const lastEdgeScrollAtRef = useRef(0);
+  const dragRef = useRef<{
+    cardId: string;
+    sourceColumnId: string;
+    targetColumnId: string;
+    pageX: number;
+    pageY: number;
+  } | null>(null);
   const [createCardColumnId, setCreateCardColumnId] = useState<string | null>(null);
   const [newCardTitle, setNewCardTitle] = useState('');
   const [newCardDescription, setNewCardDescription] = useState('');
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
   const [columnModal, setColumnModal] = useState(false);
+  const [editingColumn, setEditingColumn] = useState<BoardColumn | null>(null);
   const [newColumnName, setNewColumnName] = useState('');
+  const [newColumnDescription, setNewColumnDescription] = useState('');
   const [formBusy, setFormBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [dragState, setDragState] = useState<typeof dragRef.current>(null);
 
   const snapshot = runtime.snapshot;
   const columns = useMemo(
     () => [...(snapshot?.columns || [])].sort((left, right) => left.position - right.position),
     [snapshot?.columns],
   );
-  const visibleCards = useMemo(
-    () => (snapshot?.cards || []).filter((card) => !card.isArchived),
-    [snapshot?.cards],
+  const displayedCards = useMemo(
+    () => (snapshot?.cards || []).filter((card) => showArchived || !card.isArchived),
+    [showArchived, snapshot?.cards],
   );
-  const selectedCard = visibleCards.find((card) => card.id === selectedCardId) || null;
+  const selectedCard = (snapshot?.cards || [])
+    .find((card) => card.id === selectedCardId) || null;
   const columnWidth = Math.min(Math.max(width - 48, 282), 370);
+  const columnStride = columnWidth + spacing.sm;
 
   async function submitCard() {
     if (!createCardColumnId || !newCardTitle.trim() || formBusy) return;
@@ -156,7 +248,7 @@ export function BoardScreen({ navigation, route }: Props) {
         title: newCardTitle.trim(),
         description: newCardDescription.trim() || undefined,
         columnId: createCardColumnId,
-        status: 'todo',
+        status: 'active',
       });
       setCreateCardColumnId(null);
       setNewCardTitle('');
@@ -173,17 +265,163 @@ export function BoardScreen({ navigation, route }: Props) {
     setFormBusy(true);
     setFormError(null);
     try {
-      await createColumn(boardId, {
-        name: newColumnName.trim(),
-        position: columns.reduce((highest, column) => Math.max(highest, column.position), 0) + 1000,
-      });
+      if (editingColumn) {
+        await updateColumn(boardId, editingColumn.id, {
+          name: newColumnName.trim(),
+          description: newColumnDescription.trim() || null,
+        });
+      } else {
+        await createColumn(boardId, {
+          name: newColumnName.trim(),
+          description: newColumnDescription.trim() || undefined,
+          position: columns.reduce(
+            (highest, column) => Math.max(highest, column.position),
+            0,
+          ) + 1000,
+        });
+      }
       setColumnModal(false);
+      setEditingColumn(null);
       setNewColumnName('');
+      setNewColumnDescription('');
       await runtime.refresh();
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'Не удалось создать колонку.');
+      setFormError(error instanceof Error ? error.message : 'Не удалось сохранить колонку.');
     } finally {
       setFormBusy(false);
+    }
+  }
+
+  function openCreateColumn() {
+    setFormError(null);
+    setEditingColumn(null);
+    setNewColumnName('');
+    setNewColumnDescription('');
+    setColumnModal(true);
+  }
+
+  function openColumnActions(column: BoardColumn) {
+    Alert.alert(column.name, 'Выберите действие с колонкой.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Изменить',
+        onPress: () => {
+          setFormError(null);
+          setEditingColumn(column);
+          setNewColumnName(column.name);
+          setNewColumnDescription(column.description || '');
+          setColumnModal(true);
+        },
+      },
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(
+            'Удалить колонку?',
+            'Колонку с карточками сервер удалить не позволит.',
+            [
+              { text: 'Отмена', style: 'cancel' },
+              {
+                text: 'Удалить',
+                style: 'destructive',
+                onPress: () => {
+                  setFormError(null);
+                  void deleteColumn(boardId, column.id)
+                    .then(runtime.refresh)
+                    .catch((error) => {
+                      setFormError(error instanceof Error
+                        ? error.message
+                        : 'Не удалось удалить колонку.');
+                    });
+                },
+              },
+            ],
+          );
+        },
+      },
+    ]);
+  }
+
+  function updateDragState(next: typeof dragRef.current) {
+    dragRef.current = next;
+    setDragState(next);
+  }
+
+  function moveDrag(pageX: number, pageY: number) {
+    const current = dragRef.current;
+    if (!current || !columns.length) return;
+    const targetIndex = getDropColumnIndex({
+      scrollOffset: scrollOffsetRef.current,
+      pointerX: pageX,
+      contentInset: spacing.md,
+      columnWidth,
+      gap: spacing.sm,
+      columnCount: columns.length,
+    });
+    const targetColumn = columns[targetIndex];
+    if (targetColumn) {
+      updateDragState({
+        ...current,
+        targetColumnId: targetColumn.id,
+        pageX,
+        pageY,
+      });
+    }
+
+    const nextOffset = getEdgeScrollOffset({
+      scrollOffset: scrollOffsetRef.current,
+      pointerX: pageX,
+      viewportWidth: width,
+      columnWidth,
+      gap: spacing.sm,
+      columnCount: columns.length,
+    });
+    if (
+      nextOffset !== null
+      && Date.now() - lastEdgeScrollAtRef.current >= 340
+    ) {
+      lastEdgeScrollAtRef.current = Date.now();
+      scrollOffsetRef.current = nextOffset;
+      columnsScrollRef.current?.scrollTo({ x: nextOffset, animated: true });
+      const nextColumn = columns[Math.round(nextOffset / columnStride)];
+      if (nextColumn) {
+        updateDragState({
+          ...current,
+          targetColumnId: nextColumn.id,
+          pageX,
+          pageY,
+        });
+      }
+    }
+  }
+
+  function startDrag(card: Card, pageX: number, pageY: number) {
+    updateDragState({
+      cardId: card.id,
+      sourceColumnId: card.columnId,
+      targetColumnId: card.columnId,
+      pageX,
+      pageY,
+    });
+  }
+
+  async function finishDrag() {
+    const current = dragRef.current;
+    updateDragState(null);
+    if (!current || current.targetColumnId === current.sourceColumnId) return;
+    const latestCards = runtime.snapshot?.cards || [];
+    const position = getAppendPosition(
+      latestCards,
+      current.targetColumnId,
+      current.cardId,
+    );
+    try {
+      await runtime.moveCard(current.cardId, current.targetColumnId, position);
+    } catch (error) {
+      setFormError(error instanceof Error
+        ? error.message
+        : 'Не удалось переместить карточку.');
     }
   }
 
@@ -236,7 +474,7 @@ export function BoardScreen({ navigation, route }: Props) {
     <Screen contentStyle={styles.screen}>
       <ScreenHeader
         title={snapshot.board.name}
-        subtitle={`${columns.length} колонок · ${visibleCards.length} карточек`}
+        subtitle={`${columns.length} колонок · ${displayedCards.length} карточек`}
         onBack={() => navigation.goBack()}
         action={(
           <Button
@@ -268,6 +506,18 @@ export function BoardScreen({ navigation, route }: Props) {
         )}
       </View>
 
+      <View style={styles.boardTools}>
+        <Text style={[styles.dragHint, { color: colors.muted }]}>
+          Тяните карточку за ≡ к краю экрана, чтобы перейти в соседнюю колонку.
+        </Text>
+        <Button
+          label={showArchived ? 'Скрыть архив' : 'Показать архив'}
+          compact
+          variant="ghost"
+          onPress={() => setShowArchived((current) => !current)}
+        />
+      </View>
+
       {runtime.lastError && !runtime.failedCount ? (
         <InlineNotice text={runtime.lastError} tone={isOnline ? 'danger' : 'warning'} />
       ) : null}
@@ -277,22 +527,29 @@ export function BoardScreen({ navigation, route }: Props) {
           title="На доске нет колонок"
           description={isOnline ? 'Добавьте первую колонку.' : 'Создать колонку можно после подключения.'}
           action={isOnline
-            ? <Button label="Добавить колонку" variant="primary" onPress={() => setColumnModal(true)} />
+            ? <Button label="Добавить колонку" variant="primary" onPress={openCreateColumn} />
             : undefined}
         />
       ) : (
         <ScrollView
+          ref={columnsScrollRef}
           horizontal
+          scrollEnabled={!dragState}
           showsHorizontalScrollIndicator={false}
           snapToInterval={columnWidth + spacing.sm}
           decelerationRate="fast"
+          scrollEventThrottle={16}
+          onScroll={(event) => {
+            scrollOffsetRef.current = event.nativeEvent.contentOffset.x;
+          }}
           contentContainerStyle={styles.columns}
           style={styles.columnsViewport}
         >
           {columns.map((column) => {
-            const cards = visibleCards
+            const cards = displayedCards
               .filter((card) => card.columnId === column.id)
               .sort((left, right) => left.position - right.position);
+            const isDropTarget = dragState?.targetColumnId === column.id;
             return (
               <View
                 key={column.id}
@@ -301,7 +558,8 @@ export function BoardScreen({ navigation, route }: Props) {
                   {
                     width: columnWidth,
                     backgroundColor: colors.surfaceMuted,
-                    borderColor: colors.border,
+                    borderColor: isDropTarget ? colors.accent : colors.border,
+                    borderWidth: isDropTarget ? 2 : 1,
                   },
                 ]}
               >
@@ -310,6 +568,20 @@ export function BoardScreen({ navigation, route }: Props) {
                     {column.name}
                   </Text>
                   <Text style={[styles.columnCount, { color: colors.muted }]}>{cards.length}</Text>
+                  <Pressable
+                    onPress={() => openColumnActions(column)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Действия с колонкой ${column.name}`}
+                    style={({ pressed }) => [
+                      styles.columnMenu,
+                      {
+                        backgroundColor: colors.surface,
+                        opacity: pressed ? 0.65 : 1,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.columnMenuText, { color: colors.muted }]}>•••</Text>
+                  </Pressable>
                 </View>
                 <Button
                   label="Добавить карточку"
@@ -332,6 +604,10 @@ export function BoardScreen({ navigation, route }: Props) {
                       card={card}
                       operationState={runtime.cardOperationState(card.id)}
                       onPress={() => setSelectedCardId(card.id)}
+                      onDragStart={(pageX, pageY) => startDrag(card, pageX, pageY)}
+                      onDragMove={moveDrag}
+                      onDragEnd={() => void finishDrag()}
+                      onDragCancel={() => updateDragState(null)}
                     />
                   ))}
                   {!cards.length ? (
@@ -359,10 +635,7 @@ export function BoardScreen({ navigation, route }: Props) {
               label="Добавить колонку"
               variant="primary"
               disabled={!isOnline}
-              onPress={() => {
-                setFormError(null);
-                setColumnModal(true);
-              }}
+              onPress={openCreateColumn}
             />
           </View>
         </ScrollView>
@@ -401,9 +674,12 @@ export function BoardScreen({ navigation, route }: Props) {
 
       <FormModal
         visible={columnModal}
-        title="Новая колонка"
+        title={editingColumn ? 'Изменить колонку' : 'Новая колонка'}
         onClose={() => {
-          if (!formBusy) setColumnModal(false);
+          if (!formBusy) {
+            setColumnModal(false);
+            setEditingColumn(null);
+          }
         }}
       >
         <Field
@@ -413,9 +689,16 @@ export function BoardScreen({ navigation, route }: Props) {
           autoFocus
           placeholder="В работе"
         />
+        <Field
+          label="Описание"
+          value={newColumnDescription}
+          onChangeText={setNewColumnDescription}
+          multiline
+          placeholder="Необязательно"
+        />
         {formError ? <InlineNotice text={formError} tone="danger" /> : null}
         <Button
-          label="Создать"
+          label={editingColumn ? 'Сохранить' : 'Создать'}
           variant="primary"
           loading={formBusy}
           disabled={!newColumnName.trim() || !isOnline}
@@ -429,6 +712,25 @@ export function BoardScreen({ navigation, route }: Props) {
         runtime={runtime}
         onClose={() => setSelectedCardId(null)}
       />
+
+      {dragState ? (
+        <View
+          pointerEvents="none"
+          style={[
+            styles.dragOverlay,
+            {
+              left: Math.min(Math.max(dragState.pageX - 88, spacing.sm), width - 184),
+              top: Math.min(Math.max(dragState.pageY - 118, 88), height - 120),
+              backgroundColor: colors.accent,
+            },
+          ]}
+        >
+          <Text style={[styles.dragOverlayText, { color: colors.background }]}>
+            {columns.find((column) => column.id === dragState.targetColumnId)?.name
+              || 'Перемещение'}
+          </Text>
+        </View>
+      ) : null}
     </Screen>
   );
 }
@@ -444,6 +746,17 @@ const styles = StyleSheet.create({
   },
   statusNotice: {
     flex: 1,
+  },
+  boardTools: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  dragHint: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 15,
   },
   columnsViewport: {
     flex: 1,
@@ -476,6 +789,18 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  columnMenu: {
+    minWidth: 34,
+    minHeight: 30,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+  },
+  columnMenuText: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: -1,
+  },
   cardList: {
     flex: 1,
   },
@@ -488,6 +813,31 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
     padding: spacing.sm,
     gap: spacing.xs,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.xs,
+  },
+  cardOpenArea: {
+    flex: 1,
+    minHeight: 32,
+    justifyContent: 'center',
+  },
+  cardBody: {
+    gap: spacing.xs,
+  },
+  dragHandle: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+  },
+  dragHandleText: {
+    fontSize: 24,
+    lineHeight: 25,
+    fontWeight: '800',
   },
   cardTitle: {
     fontSize: 15,
@@ -549,5 +899,22 @@ const styles = StyleSheet.create({
   addColumnText: {
     fontSize: 13,
     lineHeight: 19,
+  },
+  dragOverlay: {
+    position: 'absolute',
+    zIndex: 50,
+    width: 176,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    elevation: 10,
+  },
+  dragOverlayText: {
+    textAlign: 'center',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

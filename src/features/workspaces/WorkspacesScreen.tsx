@@ -1,12 +1,18 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
-import { createWorkspace, getWorkspaces } from '../../shared/api/endpoints';
+import {
+  archiveWorkspace,
+  createWorkspace,
+  deleteWorkspace,
+  getWorkspaces,
+  updateWorkspace,
+} from '../../shared/api/endpoints';
 import {
   loadCachedWorkspaces,
   saveCachedWorkspaces,
@@ -32,6 +38,7 @@ export function WorkspacesScreen({ navigation }: Props) {
   const queryClient = useQueryClient();
   const [cached, setCached] = useState<Workspace[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingWorkspace, setEditingWorkspace] = useState<Workspace | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -51,23 +58,89 @@ export function WorkspacesScreen({ navigation }: Props) {
     enabled: isOnline,
   });
 
-  const createMutation = useMutation({
-    mutationFn: () => createWorkspace({
-      name: name.trim(),
-      description: description.trim() || undefined,
-      visibility: 'private',
-    }),
+  const saveMutation = useMutation({
+    mutationFn: () => editingWorkspace
+      ? updateWorkspace(editingWorkspace.id, {
+        name: name.trim(),
+        description: description.trim() || null,
+      })
+      : createWorkspace({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        visibility: 'private',
+      }),
     onSuccess: async () => {
       setModalVisible(false);
+      setEditingWorkspace(null);
       setName('');
       setDescription('');
       setFormError(null);
       await queryClient.invalidateQueries({ queryKey: ['workspaces'] });
     },
-    onError: (error) => setFormError(error instanceof Error ? error.message : 'Не удалось создать пространство.'),
+    onError: (error) => setFormError(error instanceof Error ? error.message : 'Не удалось сохранить пространство.'),
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (workspaceId: string) => archiveWorkspace(workspaceId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (workspaceId: string) => deleteWorkspace(workspaceId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['workspaces'] });
+    },
   });
 
   const items = query.data?.items ?? cached;
+
+  function openCreate() {
+    setEditingWorkspace(null);
+    setName('');
+    setDescription('');
+    setFormError(null);
+    setModalVisible(true);
+  }
+
+  function openActions(workspace: Workspace) {
+    Alert.alert(workspace.name, 'Выберите действие с пространством.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Изменить',
+        onPress: () => {
+          setEditingWorkspace(workspace);
+          setName(workspace.name);
+          setDescription(workspace.description || '');
+          setFormError(null);
+          setModalVisible(true);
+        },
+      },
+      ...(!workspace.isArchived ? [{
+        text: 'Архивировать',
+        onPress: () => archiveMutation.mutate(workspace.id),
+      }] : []),
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(
+            'Удалить пространство безвозвратно?',
+            'Все доски, карточки и связанные данные будут удалены.',
+            [
+              { text: 'Отмена', style: 'cancel' },
+              {
+                text: 'Удалить',
+                style: 'destructive',
+                onPress: () => deleteMutation.mutate(workspace.id),
+              },
+            ],
+          );
+        },
+      },
+    ]);
+  }
 
   return (
     <Screen scroll contentStyle={styles.screen}>
@@ -100,7 +173,7 @@ export function WorkspacesScreen({ navigation }: Props) {
           compact
           variant="primary"
           disabled={!isOnline}
-          onPress={() => setModalVisible(true)}
+          onPress={openCreate}
         />
       </View>
 
@@ -123,7 +196,7 @@ export function WorkspacesScreen({ navigation }: Props) {
             ? 'Создайте первое пространство для досок.'
             : 'Подключитесь к узлу, чтобы создать первое пространство.'}
           action={isOnline
-            ? <Button label="Создать пространство" variant="primary" onPress={() => setModalVisible(true)} />
+            ? <Button label="Создать пространство" variant="primary" onPress={openCreate} />
             : undefined}
         />
       ) : null}
@@ -132,6 +205,7 @@ export function WorkspacesScreen({ navigation }: Props) {
         {items.map((workspace) => (
           <Pressable
             key={workspace.id}
+            onLongPress={() => openActions(workspace)}
             onPress={() => navigation.navigate('Boards', {
               workspaceId: workspace.id,
               workspaceName: workspace.name,
@@ -150,6 +224,11 @@ export function WorkspacesScreen({ navigation }: Props) {
               <Text style={[styles.rowDescription, { color: colors.muted }]} numberOfLines={2}>
                 {workspace.description || (workspace.visibility === 'private' ? 'Личное пространство' : 'Общее пространство')}
               </Text>
+              <Text style={[styles.rowHint, { color: colors.muted }]}>
+                {workspace.isArchived
+                  ? 'В архиве · удерживайте для действий'
+                  : 'Удерживайте для изменения, архива или удаления'}
+              </Text>
             </View>
             <Text style={[styles.chevron, { color: colors.muted }]}>›</Text>
           </Pressable>
@@ -158,9 +237,12 @@ export function WorkspacesScreen({ navigation }: Props) {
 
       <FormModal
         visible={modalVisible}
-        title="Новое пространство"
+        title={editingWorkspace ? 'Изменить пространство' : 'Новое пространство'}
         onClose={() => {
-          if (!createMutation.isPending) setModalVisible(false);
+          if (!saveMutation.isPending) {
+            setModalVisible(false);
+            setEditingWorkspace(null);
+          }
         }}
       >
         <Field
@@ -179,11 +261,11 @@ export function WorkspacesScreen({ navigation }: Props) {
         />
         {formError ? <InlineNotice text={formError} tone="danger" /> : null}
         <Button
-          label="Создать"
+          label={editingWorkspace ? 'Сохранить' : 'Создать'}
           variant="primary"
-          loading={createMutation.isPending}
+          loading={saveMutation.isPending}
           disabled={!name.trim()}
-          onPress={() => createMutation.mutate()}
+          onPress={() => saveMutation.mutate()}
         />
       </FormModal>
     </Screen>
@@ -226,6 +308,10 @@ const styles = StyleSheet.create({
   rowDescription: {
     fontSize: 13,
     lineHeight: 18,
+  },
+  rowHint: {
+    fontSize: 10,
+    lineHeight: 14,
   },
   chevron: {
     fontSize: 28,

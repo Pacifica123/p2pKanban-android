@@ -1,12 +1,18 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
-import { createBoard, getBoards } from '../../shared/api/endpoints';
+import {
+  archiveBoard,
+  createBoard,
+  deleteBoard,
+  getBoards,
+  updateBoard,
+} from '../../shared/api/endpoints';
 import {
   loadCachedBoards,
   saveCachedBoards,
@@ -35,6 +41,7 @@ export function BoardsScreen({ navigation, route }: Props) {
   const queryClient = useQueryClient();
   const [cached, setCached] = useState<Board[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingBoard, setEditingBoard] = useState<Board | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
@@ -57,23 +64,85 @@ export function BoardsScreen({ navigation, route }: Props) {
     enabled: isOnline,
   });
 
-  const createMutation = useMutation({
-    mutationFn: () => createBoard(workspaceId, {
-      name: name.trim(),
-      description: description.trim() || undefined,
-    }),
+  const saveMutation = useMutation({
+    mutationFn: () => editingBoard
+      ? updateBoard(editingBoard.id, {
+        name: name.trim(),
+        description: description.trim() || null,
+      })
+      : createBoard(workspaceId, {
+        name: name.trim(),
+        description: description.trim() || undefined,
+      }),
     onSuccess: async () => {
       setModalVisible(false);
+      setEditingBoard(null);
       setName('');
       setDescription('');
       setFormError(null);
       await queryClient.invalidateQueries({ queryKey: ['boards', workspaceId] });
     },
-    onError: (error) => setFormError(error instanceof Error ? error.message : 'Не удалось создать доску.'),
+    onError: (error) => setFormError(error instanceof Error ? error.message : 'Не удалось сохранить доску.'),
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: (boardId: string) => archiveBoard(boardId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['boards', workspaceId] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (boardId: string) => deleteBoard(boardId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['boards', workspaceId] }),
   });
 
   const items = query.data?.items ?? cached;
   const boardIds = items.map((board) => board.id).join('|');
+
+  function openCreate() {
+    setEditingBoard(null);
+    setName('');
+    setDescription('');
+    setFormError(null);
+    setModalVisible(true);
+  }
+
+  function openActions(board: Board) {
+    Alert.alert(board.name, 'Выберите действие с доской.', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Изменить',
+        onPress: () => {
+          setEditingBoard(board);
+          setName(board.name);
+          setDescription(board.description || '');
+          setFormError(null);
+          setModalVisible(true);
+        },
+      },
+      ...(!board.isArchived ? [{
+        text: 'Архивировать',
+        onPress: () => archiveMutation.mutate(board.id),
+      }] : []),
+      {
+        text: 'Удалить',
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(
+            'Удалить доску безвозвратно?',
+            'Все колонки, карточки и связанные данные будут удалены.',
+            [
+              { text: 'Отмена', style: 'cancel' },
+              {
+                text: 'Удалить',
+                style: 'destructive',
+                onPress: () => deleteMutation.mutate(board.id),
+              },
+            ],
+          );
+        },
+      },
+    ]);
+  }
 
   useEffect(() => {
     if (!isOnline || !items.length) return;
@@ -120,7 +189,7 @@ export function BoardsScreen({ navigation, route }: Props) {
           compact
           variant="primary"
           disabled={!isOnline}
-          onPress={() => setModalVisible(true)}
+          onPress={openCreate}
         />
       </View>
 
@@ -141,7 +210,7 @@ export function BoardsScreen({ navigation, route }: Props) {
             ? 'Создайте первую доску в этом пространстве.'
             : 'После подключения здесь появятся сохранённые доски.'}
           action={isOnline
-            ? <Button label="Создать доску" variant="primary" onPress={() => setModalVisible(true)} />
+            ? <Button label="Создать доску" variant="primary" onPress={openCreate} />
             : undefined}
         />
       ) : null}
@@ -150,6 +219,7 @@ export function BoardsScreen({ navigation, route }: Props) {
         {items.map((board) => (
           <Pressable
             key={board.id}
+            onLongPress={() => openActions(board)}
             onPress={() => navigation.navigate('Board', {
               workspaceId,
               boardId: board.id,
@@ -169,6 +239,9 @@ export function BoardsScreen({ navigation, route }: Props) {
               <Text style={[styles.rowDescription, { color: colors.muted }]} numberOfLines={2}>
                 {board.description || 'Без описания'}
               </Text>
+              <Text style={[styles.rowHint, { color: colors.muted }]}>
+                {board.isArchived ? 'В архиве · удерживайте для действий' : 'Удерживайте для изменения, архива или удаления'}
+              </Text>
             </View>
             <Text style={[styles.chevron, { color: colors.muted }]}>›</Text>
           </Pressable>
@@ -177,9 +250,12 @@ export function BoardsScreen({ navigation, route }: Props) {
 
       <FormModal
         visible={modalVisible}
-        title="Новая доска"
+        title={editingBoard ? 'Изменить доску' : 'Новая доска'}
         onClose={() => {
-          if (!createMutation.isPending) setModalVisible(false);
+          if (!saveMutation.isPending) {
+            setModalVisible(false);
+            setEditingBoard(null);
+          }
         }}
       >
         <Field
@@ -198,11 +274,11 @@ export function BoardsScreen({ navigation, route }: Props) {
         />
         {formError ? <InlineNotice text={formError} tone="danger" /> : null}
         <Button
-          label="Создать"
+          label={editingBoard ? 'Сохранить' : 'Создать'}
           variant="primary"
-          loading={createMutation.isPending}
+          loading={saveMutation.isPending}
           disabled={!name.trim()}
-          onPress={() => createMutation.mutate()}
+          onPress={() => saveMutation.mutate()}
         />
       </FormModal>
     </Screen>
@@ -245,6 +321,10 @@ const styles = StyleSheet.create({
   rowDescription: {
     fontSize: 13,
     lineHeight: 18,
+  },
+  rowHint: {
+    fontSize: 10,
+    lineHeight: 14,
   },
   chevron: {
     fontSize: 28,

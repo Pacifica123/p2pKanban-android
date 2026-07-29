@@ -2,11 +2,16 @@ import type {
   ActivityListResponse,
   Board,
   BoardColumn,
+  BoardLabel,
+  BoardLabelListResponse,
   BoardListResponse,
   Card,
   CardListResponse,
+  Checklist,
   ChecklistItem,
   ChecklistListResponse,
+  Comment,
+  CommentListResponse,
   ColumnListResponse,
   NativeAuthSuccessResponse,
   Replica,
@@ -75,6 +80,28 @@ export function createWorkspace(input: {
   });
 }
 
+export function updateWorkspace(
+  workspaceId: string,
+  input: Partial<Pick<Workspace, 'name' | 'description' | 'visibility'>>,
+) {
+  return apiRequest<Workspace>(`/workspaces/${workspaceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function archiveWorkspace(workspaceId: string) {
+  return apiRequest<Workspace>(`/workspaces/${workspaceId}/archive`, {
+    method: 'POST',
+  });
+}
+
+export function deleteWorkspace(workspaceId: string) {
+  return apiRequest<Workspace>(`/workspaces/${workspaceId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function getBoards(workspaceId: string) {
   return apiRequest<BoardListResponse>(`/workspaces/${workspaceId}/boards`);
 }
@@ -86,6 +113,24 @@ export function createBoard(workspaceId: string, input: { name: string; descript
   });
 }
 
+export function updateBoard(
+  boardId: string,
+  input: Partial<Pick<Board, 'name' | 'description'>>,
+) {
+  return apiRequest<Board>(`/boards/${boardId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function archiveBoard(boardId: string) {
+  return apiRequest<Board>(`/boards/${boardId}/archive`, { method: 'POST' });
+}
+
+export function deleteBoard(boardId: string) {
+  return apiRequest<Board>(`/boards/${boardId}`, { method: 'DELETE' });
+}
+
 export function getBoard(boardId: string) {
   return apiRequest<Board>(`/boards/${boardId}`);
 }
@@ -94,10 +139,36 @@ export function getColumns(boardId: string) {
   return apiRequest<ColumnListResponse>(`/boards/${boardId}/columns`);
 }
 
-export function createColumn(boardId: string, input: { name: string; position?: number }) {
+export function createColumn(boardId: string, input: {
+  name: string;
+  description?: string;
+  position?: number;
+  colorToken?: string;
+  wipLimit?: number;
+}) {
   return apiRequest<BoardColumn>(`/boards/${boardId}/columns`, {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export function updateColumn(
+  boardId: string,
+  columnId: string,
+  input: Partial<Pick<
+    BoardColumn,
+    'name' | 'description' | 'position' | 'colorToken' | 'wipLimit'
+  >>,
+) {
+  return apiRequest<BoardColumn>(`/boards/${boardId}/columns/${columnId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteColumn(boardId: string, columnId: string) {
+  return apiRequest<BoardColumn>(`/boards/${boardId}/columns/${columnId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -109,13 +180,53 @@ export function getChecklists(cardId: string) {
   return apiRequest<ChecklistListResponse>(`/cards/${cardId}/checklists`);
 }
 
+export function createChecklist(
+  cardId: string,
+  input: { title: string; position?: number | null },
+) {
+  return apiRequest<Checklist>(`/cards/${cardId}/checklists`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateChecklist(
+  checklistId: string,
+  input: { title?: string; position?: number | null },
+) {
+  return apiRequest<Checklist>(`/checklists/${checklistId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteChecklist(checklistId: string) {
+  return apiRequest<Checklist>(`/checklists/${checklistId}`, { method: 'DELETE' });
+}
+
+export function createChecklistItem(
+  checklistId: string,
+  input: { title: string; position?: number | null },
+) {
+  return apiRequest<ChecklistItem>(`/checklists/${checklistId}/items`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export function updateChecklistItem(
   itemId: string,
-  input: { isDone: boolean },
+  input: { title?: string; position?: number | null; isDone?: boolean | null },
 ) {
   return apiRequest<ChecklistItem>(`/checklist-items/${itemId}`, {
     method: 'PATCH',
     body: JSON.stringify(input),
+  });
+}
+
+export function deleteChecklistItem(itemId: string) {
+  return apiRequest<ChecklistItem>(`/checklist-items/${itemId}`, {
+    method: 'DELETE',
   });
 }
 
@@ -151,6 +262,71 @@ export function moveCard(cardId: string, input: { targetColumnId: string; positi
 
 export function archiveCard(cardId: string) {
   return apiRequest<Card>(`/cards/${cardId}/archive`, { method: 'POST' });
+}
+
+export function unarchiveCard(cardId: string) {
+  return apiRequest<Card>(`/cards/${cardId}/unarchive`, { method: 'POST' });
+}
+
+export function deleteCard(cardId: string) {
+  return apiRequest<Card>(`/cards/${cardId}`, { method: 'DELETE' });
+}
+
+export function getBoardLabels(boardId: string) {
+  return apiRequest<BoardLabelListResponse>(`/boards/${boardId}/labels`);
+}
+
+export function createBoardLabel(
+  boardId: string,
+  input: { name: string; color: string; description?: string | null },
+) {
+  return apiRequest<BoardLabel>(`/boards/${boardId}/labels`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateBoardLabel(
+  labelId: string,
+  input: { name?: string; color?: string; description?: string | null },
+) {
+  return apiRequest<BoardLabel>(`/labels/${labelId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteBoardLabel(labelId: string) {
+  return apiRequest<BoardLabel>(`/labels/${labelId}`, { method: 'DELETE' });
+}
+
+export function replaceCardLabels(cardId: string, labelIds: string[]) {
+  return apiRequest<Card>(`/cards/${cardId}/labels`, {
+    method: 'PUT',
+    body: JSON.stringify({ labelIds }),
+  });
+}
+
+export function getCardComments(cardId: string) {
+  return apiRequest<CommentListResponse>(`/cards/${cardId}/comments`);
+}
+
+export function createComment(cardId: string, body: string) {
+  return apiRequest<Comment>(`/cards/${cardId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function updateComment(commentId: string, body: string) {
+  return apiRequest<Comment>(`/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ body }),
+  });
+}
+
+export function deleteComment(commentId: string) {
+  return apiRequest<Comment>(`/comments/${commentId}`, { method: 'DELETE' });
 }
 
 export function getBoardActivity(boardId: string) {

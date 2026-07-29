@@ -1,9 +1,19 @@
-import type { Board, BoardColumn, Card } from '../../shared/types/api';
+import type {
+  Board,
+  BoardColumn,
+  Card,
+  Checklist,
+  ChecklistItem,
+} from '../../shared/types/api';
 import {
   LOCAL_SCHEMA_VERSION,
   applyOperations,
   createTemporaryCard,
+  createTemporaryChecklist,
+  createTemporaryChecklistItem,
   replaceCreatedCard,
+  replaceCreatedChecklist,
+  replaceCreatedChecklistItem,
   type LocalBoardSnapshot,
   type LocalOperation,
 } from './model';
@@ -200,5 +210,243 @@ describe('local-first reducer', () => {
       checklistItemCount: 1,
       checklistCompletedItemCount: 1,
     });
+  });
+
+  it('replays the complete checklist CRUD sequence and updates card counters', () => {
+    const localCard = createTemporaryCard({
+      id: 'card-checklist-crud',
+      boardId: board.id,
+      columnId: columnA.id,
+      title: 'CRUD чек-листа',
+      cards: [],
+      now: board.updatedAt,
+    });
+    const checklist = createTemporaryChecklist({
+      id: 'local-checklist-one',
+      cardId: localCard.id,
+      title: 'Первичное название',
+      checklists: [],
+      now: '2026-07-26T10:01:00Z',
+    });
+    const item = createTemporaryChecklistItem({
+      id: 'local-checklist-item-one',
+      checklistId: checklist.id,
+      title: 'Первичный пункт',
+      items: [],
+      now: '2026-07-26T10:02:00Z',
+    });
+    const common = {
+      boardId: board.id,
+      status: 'pending' as const,
+      attempts: 0,
+      lastError: null,
+    };
+    const createAndUpdate: LocalOperation[] = [
+      {
+        ...common,
+        id: 'op-create-checklist',
+        entityId: checklist.id,
+        kind: 'checklist.create',
+        createdAt: checklist.createdAt,
+        payload: {
+          cardId: localCard.id,
+          input: { title: checklist.title, position: checklist.position },
+          tempChecklist: checklist,
+        },
+      },
+      {
+        ...common,
+        id: 'op-update-checklist',
+        entityId: checklist.id,
+        kind: 'checklist.update',
+        createdAt: '2026-07-26T10:01:30Z',
+        payload: {
+          cardId: localCard.id,
+          input: { title: 'Проверки релиза' },
+        },
+      },
+      {
+        ...common,
+        id: 'op-create-item',
+        entityId: item.id,
+        kind: 'checklist.item.create',
+        createdAt: item.createdAt,
+        payload: {
+          cardId: localCard.id,
+          checklistId: checklist.id,
+          input: { title: item.title, position: item.position },
+          tempItem: item,
+        },
+      },
+      {
+        ...common,
+        id: 'op-update-item',
+        entityId: item.id,
+        kind: 'checklist.item.update',
+        createdAt: '2026-07-26T10:03:00Z',
+        payload: {
+          cardId: localCard.id,
+          checklistId: checklist.id,
+          input: { title: 'Собрать APK', isDone: true },
+        },
+      },
+    ];
+
+    const populated = applyOperations(snapshot([localCard]), createAndUpdate);
+    expect(populated.checklistsByCardId[localCard.id]?.[0]).toMatchObject({
+      title: 'Проверки релиза',
+      items: [{ title: 'Собрать APK', isDone: true }],
+    });
+    expect(populated.cards[0]).toMatchObject({
+      checklistCount: 1,
+      checklistItemCount: 1,
+      checklistCompletedItemCount: 1,
+    });
+
+    const cleared = applyOperations(populated, [
+      {
+        ...common,
+        id: 'op-delete-item',
+        entityId: item.id,
+        kind: 'checklist.item.delete',
+        createdAt: '2026-07-26T10:04:00Z',
+        payload: {
+          cardId: localCard.id,
+          checklistId: checklist.id,
+        },
+      },
+      {
+        ...common,
+        id: 'op-delete-checklist',
+        entityId: checklist.id,
+        kind: 'checklist.delete',
+        createdAt: '2026-07-26T10:05:00Z',
+        payload: { cardId: localCard.id },
+      },
+    ]);
+    expect(cleared.checklistsByCardId[localCard.id]).toEqual([]);
+    expect(cleared.cards[0]).toMatchObject({
+      checklistCount: 0,
+      checklistItemCount: 0,
+      checklistCompletedItemCount: 0,
+    });
+  });
+
+  it('remaps temporary checklist and item ids after coordinator creation', () => {
+    const localCard = createTemporaryCard({
+      id: 'server-card',
+      boardId: board.id,
+      columnId: columnA.id,
+      title: 'Переназначение ID',
+      cards: [],
+      now: board.updatedAt,
+    });
+    const tempChecklist = createTemporaryChecklist({
+      id: 'local-checklist-remap',
+      cardId: localCard.id,
+      title: 'Проверки',
+      checklists: [],
+      now: board.updatedAt,
+    });
+    const tempItem = createTemporaryChecklistItem({
+      id: 'local-checklist-item-remap',
+      checklistId: tempChecklist.id,
+      title: 'Пункт',
+      items: [],
+      now: board.updatedAt,
+    });
+    const initial = snapshot([localCard]);
+    initial.checklistsByCardId[localCard.id] = [{
+      ...tempChecklist,
+      items: [tempItem],
+    }];
+    const operations: LocalOperation[] = [
+      {
+        id: 'op-checklist-create',
+        boardId: board.id,
+        entityId: tempChecklist.id,
+        kind: 'checklist.create',
+        status: 'pending',
+        createdAt: board.updatedAt,
+        attempts: 0,
+        lastError: null,
+        payload: {
+          cardId: localCard.id,
+          input: { title: tempChecklist.title },
+          tempChecklist,
+        },
+      },
+      {
+        id: 'op-item-create',
+        boardId: board.id,
+        entityId: tempItem.id,
+        kind: 'checklist.item.create',
+        status: 'pending',
+        createdAt: board.updatedAt,
+        attempts: 0,
+        lastError: null,
+        payload: {
+          cardId: localCard.id,
+          checklistId: tempChecklist.id,
+          input: { title: tempItem.title },
+          tempItem,
+        },
+      },
+      {
+        id: 'op-item-update',
+        boardId: board.id,
+        entityId: tempItem.id,
+        kind: 'checklist.item.update',
+        status: 'pending',
+        createdAt: board.updatedAt,
+        attempts: 0,
+        lastError: null,
+        payload: {
+          cardId: localCard.id,
+          checklistId: tempChecklist.id,
+          input: { isDone: true },
+        },
+      },
+    ];
+    const serverChecklist: Checklist = {
+      ...tempChecklist,
+      id: 'server-checklist',
+      items: [],
+    };
+    const checklistResult = replaceCreatedChecklist(
+      initial,
+      operations,
+      localCard.id,
+      tempChecklist.id,
+      serverChecklist,
+    );
+    expect(checklistResult.snapshot.checklistsByCardId[localCard.id]?.[0]?.id)
+      .toBe(serverChecklist.id);
+    expect(checklistResult.operations
+      .every((operation) => {
+        if (
+          operation.kind !== 'checklist.item.create'
+          && operation.kind !== 'checklist.item.update'
+          && operation.kind !== 'checklist.item.delete'
+        ) return true;
+        return operation.payload.checklistId === serverChecklist.id;
+      })).toBe(true);
+
+    const serverItem: ChecklistItem = {
+      ...tempItem,
+      id: 'server-item',
+      checklistId: serverChecklist.id,
+    };
+    const itemResult = replaceCreatedChecklistItem(
+      checklistResult.snapshot,
+      checklistResult.operations,
+      localCard.id,
+      tempItem.id,
+      serverItem,
+    );
+    expect(itemResult.snapshot.checklistsByCardId[localCard.id]?.[0]?.items[0]?.id)
+      .toBe(serverItem.id);
+    expect(itemResult.operations
+      .filter((operation) => operation.entityId === serverItem.id)).toHaveLength(2);
   });
 });

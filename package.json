@@ -1,6 +1,6 @@
 {
   "name": "p2pkanban-mobile",
-  "version": "1.3.0-mobile.4",
+  "version": "1.4.0-mobile.5",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -8,6 +8,7 @@
     "android": "expo run:android",
     "prebuild": "expo prebuild --platform android",
     "typecheck": "tsc --noEmit",
+    "check:contract": "node scripts/check-core-crud-contract.mjs",
     "test": "jest --runInBand",
     "test:watch": "jest --watch",
     "export:android": "expo export --platform android --output-dir dist/android-bundle",
@@ -44,7 +45,7 @@
     "preset": "jest-expo",
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/android/"
+      "<rootDir>/android/"
     ],
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?|@noble/.*|nostr-tools|expo(nent)?|expo-modules-core|@expo(nent)?/.*|@react-navigation/.*|react-native-safe-area-context|react-native-screens)/)"

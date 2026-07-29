@@ -2,7 +2,12 @@ import * as Crypto from 'expo-crypto';
 import { getPublicKey, generateSecretKey } from 'nostr-tools/pure';
 
 import type { Card } from '../../shared/types/api';
-import type { LocalBoardSnapshot, LocalOperation } from '../localFirst/model';
+import {
+  isChecklistOperation,
+  operationCardId,
+  type LocalBoardSnapshot,
+  type LocalOperation,
+} from '../localFirst/model';
 import {
   decodeBoardKey,
   deriveBoardTag,
@@ -62,7 +67,7 @@ async function identity() {
 }
 
 function fieldsFor(operation: LocalOperation) {
-  if (operation.kind === 'checklist.item.update') return ['checklists'];
+  if (isChecklistOperation(operation)) return ['checklists'];
   if (operation.kind === 'card.create') return ['*'];
   if (operation.kind === 'card.update') return Object.keys(operation.payload.input);
   if (operation.kind === 'card.move') return ['columnId', 'position', 'updatedAt'];
@@ -164,9 +169,7 @@ export async function publishLocalOperation(
   operation: LocalOperation,
   snapshot: LocalBoardSnapshot,
 ) {
-  const cardId = operation.kind === 'checklist.item.update'
-    ? operation.payload.cardId
-    : operation.entityId;
+  const cardId = operationCardId(operation);
   const card = snapshot.cards.find((candidate) => candidate.id === cardId);
   if (!card) throw new Error('Локальная карточка для события не найдена.');
   const { replicaId } = await identity();

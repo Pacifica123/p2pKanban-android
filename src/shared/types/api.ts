@@ -54,6 +54,11 @@ export interface Board {
   description?: string | null;
   boardType: 'kanban';
   isArchived: boolean;
+  labelIds?: string[];
+  checklistCount?: number;
+  checklistCompletedItemCount?: number;
+  commentCount?: number;
+  createdByUserId?: string | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -145,6 +150,35 @@ export interface Checklist {
 
 export interface ChecklistListResponse {
   items: Checklist[];
+}
+
+export interface BoardLabel {
+  id: string;
+  boardId: string;
+  name: string;
+  color: string;
+  description?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BoardLabelListResponse {
+  items: BoardLabel[];
+}
+
+export interface Comment {
+  id: string;
+  cardId: string;
+  authorUserId?: string | null;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  editedAt?: string | null;
+}
+
+export interface CommentListResponse {
+  items: Comment[];
+  pageInfo: PageInfo;
 }
 
 export interface ActivityActor {

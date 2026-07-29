@@ -39,7 +39,7 @@ export async function loadBoardSnapshot(boardId: string) {
     checklistsHydratedAt?: string | null;
   }) | null>(raw, null);
   if (!snapshot || !snapshot.board?.id) return null;
-  if (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== LOCAL_SCHEMA_VERSION) return null;
+  if (![1, 2, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
   const migrated: LocalBoardSnapshot = {
     ...snapshot,
     schemaVersion: LOCAL_SCHEMA_VERSION,
