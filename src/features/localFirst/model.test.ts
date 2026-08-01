@@ -449,4 +449,32 @@ describe('local-first reducer', () => {
     expect(itemResult.operations
       .filter((operation) => operation.entityId === serverItem.id)).toHaveLength(2);
   });
+
+  it('removes a card and its checklists for an optimistic global delete', () => {
+    const existing = createTemporaryCard({
+      id: 'server-card-delete',
+      boardId: board.id,
+      columnId: columnA.id,
+      title: 'Удалить везде',
+      cards: [],
+      now: board.updatedAt,
+    });
+    const initial = {
+      ...snapshot([existing]),
+      checklistsByCardId: { [existing.id]: [] },
+    };
+    const result = applyOperations(initial, [{
+      id: 'op-delete-card',
+      boardId: board.id,
+      entityId: existing.id,
+      kind: 'card.delete',
+      status: 'pending',
+      createdAt: '2026-07-26T10:10:00Z',
+      attempts: 0,
+      lastError: null,
+      payload: { card: existing },
+    }]);
+    expect(result.cards).toEqual([]);
+    expect(result.checklistsByCardId[existing.id]).toBeUndefined();
+  });
 });

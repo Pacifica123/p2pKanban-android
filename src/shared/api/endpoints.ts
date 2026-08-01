@@ -269,7 +269,7 @@ export function unarchiveCard(cardId: string) {
 }
 
 export function deleteCard(cardId: string) {
-  return apiRequest<Card>(`/cards/${cardId}`, { method: 'DELETE' });
+  return apiRequest<Card>(`/cards/${cardId}?scope=all_devices`, { method: 'DELETE' });
 }
 
 export function getBoardLabels(boardId: string) {

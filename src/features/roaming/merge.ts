@@ -31,6 +31,7 @@ const CHECKLISTS_FIELD = 'checklists';
 export const EMPTY_ROAMING_APPLY_STATE: RoamingApplyState = {
   seenEventIds: [],
   fieldVersions: {},
+  tombstones: {},
   lastRelayPullAt: 0,
 };
 
@@ -56,12 +57,33 @@ export function applyRoamingEvents(
   let snapshot = currentSnapshot;
   const seen = new Set(currentState.seenEventIds);
   const versions = { ...currentState.fieldVersions };
+  const tombstones = { ...(currentState.tombstones || {}) };
   let applied = 0;
 
   const ordered = [...events].sort((left, right) => compareVersion(stampOf(left), stampOf(right)));
   for (const event of ordered) {
     if (seen.has(event.eventId)) continue;
     seen.add(event.eventId);
+
+    if (event.operation === 'card.delete') {
+      const current = tombstones[event.entityId];
+      const candidate = stampOf(event);
+      if (!current || compareVersion(candidate, current) > 0) {
+        tombstones[event.entityId] = candidate;
+      }
+      if (snapshot?.cards.some((card) => card.id === event.entityId)) {
+        const checklistsByCardId = { ...snapshot.checklistsByCardId };
+        delete checklistsByCardId[event.entityId];
+        snapshot = {
+          ...snapshot,
+          cards: snapshot.cards.filter((card) => card.id !== event.entityId),
+          checklistsByCardId,
+          cachedAt: event.occurredAt,
+        };
+      }
+      applied += 1;
+      continue;
+    }
 
     if (event.operation === 'board.snapshot') {
       if (!snapshot) {
@@ -71,10 +93,14 @@ export function applyRoamingEvents(
           && candidate.workspaceId === event.workspaceId
           && candidate.board.id === event.boardId
         ) {
+          const visibleCards = candidate.cards.filter((card) => !tombstones[card.id]);
           snapshot = {
             ...candidate,
             schemaVersion: LOCAL_SCHEMA_VERSION,
-            checklistsByCardId: candidate.checklistsByCardId || {},
+            cards: visibleCards,
+            checklistsByCardId: Object.fromEntries(
+              visibleCards.map((card) => [card.id, candidate.checklistsByCardId?.[card.id] || []]),
+            ),
             checklistsHydratedAt: candidate.checklistsHydratedAt || null,
           };
           const stamp = stampOf(event);
@@ -88,7 +114,7 @@ export function applyRoamingEvents(
       continue;
     }
 
-    if (!snapshot || event.operation !== 'card.put') continue;
+    if (!snapshot || event.operation !== 'card.put' || tombstones[event.entityId]) continue;
     const incoming = event.payload.card as Card | undefined;
     const incomingChecklists = Array.isArray(event.payload.checklists)
       ? event.payload.checklists as Checklist[]
@@ -160,6 +186,7 @@ export function applyRoamingEvents(
     state: {
       seenEventIds: [...seen].slice(-5000),
       fieldVersions: versions,
+      tombstones,
       lastRelayPullAt: currentState.lastRelayPullAt,
     } satisfies RoamingApplyState,
   };

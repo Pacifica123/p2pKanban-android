@@ -2,7 +2,7 @@
   "expo": {
     "name": "p2pKanban",
     "slug": "p2pkanban-mobile",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "p2pkanban",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "dev.p2pkanban.mobile",
-      "versionCode": 5,
+      "versionCode": 6,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",

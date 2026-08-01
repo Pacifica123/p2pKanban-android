@@ -4,6 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNetwork } from '../../app/NetworkProvider';
 import { ApiError, isNetworkError } from '../../shared/api/client';
 import {
+  applyLocalCardVisibility,
+  hideCardOnThisDevice,
+  loadLocallyHiddenCards,
+  pruneLocallyHiddenCards,
+  reconcileHiddenCardsWithCoordinator,
+  restoreCardOnThisDevice,
+  type LocallyHiddenCard,
+} from './localVisibility';
+import {
   archiveCard as archiveCardRemote,
   createCard as createCardRemote,
   createChecklist as createChecklistRemote,
@@ -88,6 +97,9 @@ export interface LocalBoardRuntime {
   archiveCard: (cardId: string) => Promise<void>;
   unarchiveCard: (cardId: string) => Promise<void>;
   deleteCard: (cardId: string) => Promise<void>;
+  locallyHiddenCards: Card[];
+  hideCardLocally: (cardId: string) => Promise<void>;
+  restoreCardLocally: (cardId: string) => Promise<void>;
   mergeCoordinatorCard: (card: Card) => Promise<void>;
   getCardChecklists: (cardId: string) => Checklist[];
   createChecklist: (cardId: string, title: string) => Promise<void>;
@@ -190,6 +202,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
   const [lastError, setLastError] = useState<string | null>(null);
   const [syncMode, setSyncMode] = useState<'node' | 'roaming'>('node');
   const [relayCount, setRelayCount] = useState(0);
+  const [locallyHidden, setLocallyHidden] = useState<LocallyHiddenCard[]>([]);
   const snapshotRef = useRef<LocalBoardSnapshot | null>(null);
   const operationsRef = useRef<LocalOperation[]>([]);
   const roamingCapabilityRef = useRef<RoamingCapability | null>(null);
@@ -231,10 +244,17 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
             const relay = await pullRoamingBoard(storedCapability, snapshotRef.current);
             relayReceived = relay.received;
             relaySnapshot = relay.snapshot;
+            const nextHidden = await pruneLocallyHiddenCards(
+              boardId,
+              Object.keys(relay.applyState.tombstones || {}),
+            );
+            setLocallyHidden(nextHidden);
             if (relay.snapshot) {
+              const visibleRelaySnapshot = applyLocalCardVisibility(relay.snapshot, nextHidden);
               const queued = await loadOperationQueue();
-              await persistBoardAndQueue(relay.snapshot, queued);
-              applyState(relay.snapshot, queued);
+              await persistBoardAndQueue(visibleRelaySnapshot, queued);
+              applyState(visibleRelaySnapshot, queued);
+              relaySnapshot = visibleRelaySnapshot;
             }
             setSyncMode('roaming');
             setRelayCount(relay.relayCount);
@@ -246,10 +266,16 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
 
         try {
           await touchWorkspaceSync(workspaceId).catch(() => null);
-          const [seeded, allOperations] = await Promise.all([
+          const [coordinatorSnapshot, allOperations] = await Promise.all([
             fetchBoardSnapshot(boardId, workspaceId),
             loadOperationQueue(),
           ]);
+          const nextHidden = await reconcileHiddenCardsWithCoordinator(
+            boardId,
+            coordinatorSnapshot.cards.map((card) => card.id),
+          );
+          setLocallyHidden(nextHidden);
+          const seeded = applyLocalCardVisibility(coordinatorSnapshot, nextHidden);
           nodeUnavailableUntilRef.current = 0;
           const mergedBase = mergeBoardSnapshots(seeded, relaySnapshot);
           const merged = await persistServerSnapshot(mergedBase, allOperations);
@@ -363,6 +389,9 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
             } else if (current.kind === 'card.unarchive') {
               const restored = await unarchiveCardRemote(current.entityId);
               nextSnapshot = replaceCardInSnapshot(nextSnapshot, restored);
+            } else if (current.kind === 'card.delete') {
+              await deleteCardRemote(current.entityId);
+              nextSnapshot = removeCardFromSnapshot(nextSnapshot, current.entityId);
             } else if (current.kind === 'checklist.create') {
               const created = await createChecklistRemote(
                 current.payload.cardId,
@@ -485,14 +514,19 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     void Promise.all([
       loadLocalBoardState(boardId),
       loadRoamingCapability(boardId),
-    ]).then(([local, capability]) => {
+      loadLocallyHiddenCards(boardId),
+    ]).then(([local, capability, hidden]) => {
       if (!active) return;
+      setLocallyHidden(hidden);
       roamingCapabilityRef.current = capability;
       if (capability) {
         setSyncMode('roaming');
         setRelayCount(capability.relays.length);
       }
-      applyState(local.snapshot, local.operations);
+      applyState(
+        local.snapshot ? applyLocalCardVisibility(local.snapshot, hidden) : null,
+        local.operations,
+      );
       setHydrated(true);
       if (isOnline) {
         const hasPending = local.operations.some((operation) => operation.status === 'pending');
@@ -615,11 +649,21 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     deleteCard: async (cardId) => {
       const current = snapshotRef.current;
       if (!current) return;
+      const card = current.cards.find((candidate) => candidate.id === cardId);
+      if (!card) return;
       const allOperations = await loadOperationQueue();
       const isUnsyncedCreate = allOperations.some((operation) =>
         operation.kind === 'card.create' && operation.entityId === cardId);
       if (!isUnsyncedCreate) {
-        await deleteCardRemote(cardId);
+        if (allOperations.some((operation) => operationAffectsCard(operation, cardId))) {
+          throw new Error('Сначала дождитесь синхронизации изменений этой карточки.');
+        }
+        await enqueue({
+          ...operationBase(boardId, cardId),
+          kind: 'card.delete',
+          payload: { card },
+        });
+        return;
       }
       await runSerialized(async () => {
         const latestOperations = await loadOperationQueue();
@@ -632,6 +676,41 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
         await persistBoardAndQueue(nextSnapshot, nextOperations);
         applyState(nextSnapshot, nextOperations);
       });
+    },
+    locallyHiddenCards: locallyHidden.map((value) => value.card),
+    hideCardLocally: async (cardId) => {
+      const current = snapshotRef.current;
+      if (!current) return;
+      const allOperations = await loadOperationQueue();
+      if (allOperations.some((operation) => operationAffectsCard(operation, cardId))) {
+        throw new Error('Сначала дождитесь синхронизации изменений этой карточки.');
+      }
+      await runSerialized(async () => {
+        const result = await hideCardOnThisDevice(
+          boardId,
+          snapshotRef.current || current,
+          cardId,
+        );
+        setLocallyHidden(result.hidden);
+        await persistBoardAndQueue(result.snapshot, allOperations);
+        applyState(result.snapshot, allOperations);
+      });
+    },
+    restoreCardLocally: async (cardId) => {
+      const current = snapshotRef.current;
+      if (!current) return;
+      await runSerialized(async () => {
+        const allOperations = await loadOperationQueue();
+        const result = await restoreCardOnThisDevice(
+          boardId,
+          snapshotRef.current || current,
+          cardId,
+        );
+        setLocallyHidden(result.hidden);
+        await persistBoardAndQueue(result.snapshot, allOperations);
+        applyState(result.snapshot, allOperations);
+      });
+      if (isOnline) void refresh();
     },
     mergeCoordinatorCard: async (card) => {
       const current = snapshotRef.current;
@@ -742,7 +821,9 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     failedCount,
     flushing,
     hydrated,
+    isOnline,
     lastError,
+    locallyHidden,
     operations,
     pendingCount,
     relayCount,

@@ -67,6 +67,7 @@ async function identity() {
 }
 
 function fieldsFor(operation: LocalOperation) {
+  if (operation.kind === 'card.delete') return ['__lifecycle'];
   if (isChecklistOperation(operation)) return ['checklists'];
   if (operation.kind === 'card.create') return ['*'];
   if (operation.kind === 'card.update') return Object.keys(operation.payload.input);
@@ -83,6 +84,23 @@ function eventForCard(input: {
   replicaSeq: number;
   logicalClock: number;
 }): RoamingBoardEvent {
+  if (input.operation.kind === 'card.delete') {
+    return {
+      protocolVersion: ROAMING_PROTOCOL_VERSION,
+      eventId: input.operation.id,
+      workspaceId: input.capability.workspaceId,
+      boardId: input.capability.boardId,
+      replicaId: input.replicaId,
+      replicaSeq: input.replicaSeq,
+      logicalClock: input.logicalClock,
+      entityType: 'card',
+      entityId: input.operation.entityId,
+      operation: 'card.delete',
+      fieldMask: fieldsFor(input.operation),
+      payload: { deletedAt: input.operation.createdAt },
+      occurredAt: input.operation.createdAt,
+    };
+  }
   return {
     protocolVersion: ROAMING_PROTOCOL_VERSION,
     eventId: input.operation.id,
@@ -170,7 +188,9 @@ export async function publishLocalOperation(
   snapshot: LocalBoardSnapshot,
 ) {
   const cardId = operationCardId(operation);
-  const card = snapshot.cards.find((candidate) => candidate.id === cardId);
+  const card = operation.kind === 'card.delete'
+    ? operation.payload.card
+    : snapshot.cards.find((candidate) => candidate.id === cardId);
   if (!card) throw new Error('Локальная карточка для события не найдена.');
   const { replicaId } = await identity();
   const logicalClock = operationSequence(operation);

@@ -122,7 +122,7 @@ export function SettingsScreen({ navigation }: Props) {
       </Panel>
 
       <Text style={[styles.version, { color: colors.muted }]}>
-        p2pKanban Android · 1.4.0-mobile.5
+        p2pKanban Android · 1.5.0-mobile.6
       </Text>
     </Screen>
   );

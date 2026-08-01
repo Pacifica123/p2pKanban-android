@@ -32,7 +32,7 @@ export interface RoamingBoardEvent {
   logicalClock: number;
   entityType: 'board' | 'card';
   entityId: string;
-  operation: 'board.snapshot' | 'card.put';
+  operation: 'board.snapshot' | 'card.put' | 'card.delete';
   fieldMask: string[];
   payload: Record<string, unknown>;
   occurredAt: string;
@@ -48,6 +48,7 @@ export interface RoamingCiphertextRecord {
 export interface RoamingApplyState {
   seenEventIds: string[];
   fieldVersions: Record<string, RoamingVersionStamp>;
+  tombstones: Record<string, RoamingVersionStamp>;
   lastRelayPullAt: number;
 }
 

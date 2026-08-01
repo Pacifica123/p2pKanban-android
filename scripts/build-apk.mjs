@@ -33,7 +33,7 @@ if (isWindows) {
 }
 
 const source = join(mobileRoot, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
-const destination = join(mobileRoot, 'dist', 'p2pKanban-mobile-1.4.0.apk');
+const destination = join(mobileRoot, 'dist', 'p2pKanban-mobile-1.5.0.apk');
 if (!existsSync(source)) {
   console.error(`Gradle завершился без ожидаемого APK: ${source}`);
   process.exit(3);

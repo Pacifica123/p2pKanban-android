@@ -19,11 +19,11 @@ const packageJson = JSON.parse(read('package.json'));
 const packageLock = JSON.parse(read('package-lock.json'));
 const appJson = JSON.parse(read('app.json'));
 if (
-  packageJson.version !== '1.4.0-mobile.5'
+  packageJson.version !== '1.5.0-mobile.6'
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
-  || appJson.expo.version !== '1.4.0'
-  || appJson.expo.android.versionCode !== 5
+  || appJson.expo.version !== '1.5.0'
+  || appJson.expo.android.versionCode !== 6
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }
@@ -47,6 +47,7 @@ requireText('src/features/localFirst/model.ts', [
   "kind: 'checklist.delete'",
   "kind: 'checklist.item.create'",
   "kind: 'checklist.item.delete'",
+  "kind: 'card.delete'",
   'replaceCreatedChecklist',
   'replaceCreatedChecklistItem',
 ]);
@@ -57,10 +58,13 @@ requireText('src/features/localFirst/useLocalBoard.ts', [
   'publishLocalOperation(',
   'createChecklistItemRemote',
   'deleteChecklistItemRemote',
+  'hideCardOnThisDevice',
+  'restoreCardOnThisDevice',
 ]);
 requireText('src/features/roaming/service.ts', [
   "return ['checklists']",
   'operationCardId(operation)',
+  "operation: 'card.delete'",
 ]);
 requireText('src/features/boards/BoardScreen.tsx', [
   'PanResponder.create',
@@ -68,6 +72,7 @@ requireText('src/features/boards/BoardScreen.tsx', [
   'getEdgeScrollOffset',
   'getAppendPosition',
   'runtime.moveCard',
+  'runtime.locallyHiddenCards',
 ]);
 requireText('src/features/cards/CardDetailsModal.tsx', [
   'runtime.createChecklist',
@@ -76,6 +81,21 @@ requireText('src/features/cards/CardDetailsModal.tsx', [
   'replaceCardLabels',
   'createBoardLabel',
   'createComment',
+  'runtime.hideCardLocally',
+  'Удалить везде',
 ]);
 
-console.log('OK: Android CRUD, coordinator-first fallback, roaming checklists and drag contract are aligned');
+requireText('src/features/roaming/merge.ts', [
+  "event.operation === 'card.delete'",
+  'tombstones[event.entityId]',
+]);
+requireText('src/features/localFirst/localVisibility.ts', [
+  'applyLocalCardVisibility',
+  'reconcileHiddenCardsWithCoordinator',
+]);
+requireText('android/app/build.gradle', [
+  'versionCode 6',
+  'versionName "1.5.0"',
+]);
+
+console.log('OK: Android CRUD, scoped card deletion, roaming tombstones and drag contract are aligned');

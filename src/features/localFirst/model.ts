@@ -69,6 +69,11 @@ export interface ArchiveCardOperation extends OperationBase {
   payload: Record<string, never>;
 }
 
+export interface DeleteCardOperation extends OperationBase {
+  kind: 'card.delete';
+  payload: { card: Card };
+}
+
 export interface CreateChecklistOperation extends OperationBase {
   kind: 'checklist.create';
   payload: {
@@ -127,6 +132,7 @@ export type LocalOperation =
   | UpdateCardOperation
   | MoveCardOperation
   | ArchiveCardOperation
+  | DeleteCardOperation
   | CreateChecklistOperation
   | UpdateChecklistOperation
   | DeleteChecklistOperation
@@ -287,6 +293,17 @@ export function applyOperation(
           updatedAt: timestamp,
         }
         : card),
+      cachedAt: timestamp,
+    };
+  }
+
+  if (operation.kind === 'card.delete') {
+    const checklistsByCardId = { ...snapshot.checklistsByCardId };
+    delete checklistsByCardId[operation.entityId];
+    return {
+      ...snapshot,
+      cards: snapshot.cards.filter((card) => card.id !== operation.entityId),
+      checklistsByCardId,
       cachedAt: timestamp,
     };
   }

@@ -110,3 +110,23 @@ test('roaming card bundle carries checklist items', () => {
   );
   expect(result.snapshot?.checklistsByCardId[cardId]?.[0]?.items[0]?.isDone).toBe(true);
 });
+
+test('card tombstone wins over later stale card.put and prevents resurrection', () => {
+  const deleted = event(10, 'replica-a', 'удалена');
+  deleted.operation = 'card.delete';
+  deleted.fieldMask = ['__lifecycle'];
+  deleted.payload = { deletedAt: '2026-07-28T12:00:00.000Z' };
+  const stalePut = event(99, 'replica-z', 'не должна воскреснуть');
+
+  const first = applyRoamingEvents(
+    snapshot(),
+    EMPTY_ROAMING_APPLY_STATE,
+    [deleted],
+  );
+  expect(first.snapshot?.cards).toEqual([]);
+  expect(first.state.tombstones[cardId]).toBeDefined();
+
+  const second = applyRoamingEvents(first.snapshot, first.state, [stalePut]);
+  expect(second.snapshot?.cards).toEqual([]);
+  expect(second.applied).toBe(0);
+});

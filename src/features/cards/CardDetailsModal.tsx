@@ -235,18 +235,40 @@ export function CardDetailsModal({
   function confirmDelete() {
     if (!card) return;
     Alert.alert(
-      'Удалить карточку безвозвратно?',
-      'Для синхронизированной карточки удаление требует доступного локального узла.',
+      'Что сделать с карточкой?',
+      '«Скрыть здесь» действует только на этом телефоне и допускает возврат. «Удалить везде» распространяет tombstone и не даёт старым копиям воскресить карточку.',
       [
         { text: 'Отмена', style: 'cancel' },
         {
-          text: 'Удалить',
-          style: 'destructive',
+          text: 'Скрыть здесь',
           onPress: () => {
-            void run('card.delete', async () => {
-              await runtime.deleteCard(card.id);
+            void run('card.hide-local', async () => {
+              await runtime.hideCardLocally(card.id);
               onClose();
             });
+          },
+        },
+        {
+          text: 'Удалить везде',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Удалить на всех устройствах?',
+              'Это глобальное удаление. Автоматического восстановления из старой локальной копии не будет.',
+              [
+                { text: 'Отмена', style: 'cancel' },
+                {
+                  text: 'Удалить везде',
+                  style: 'destructive',
+                  onPress: () => {
+                    void run('card.delete', async () => {
+                      await runtime.deleteCard(card.id);
+                      onClose();
+                    });
+                  },
+                },
+              ],
+            );
           },
         },
       ],
@@ -797,7 +819,7 @@ export function CardDetailsModal({
         label={card?.isArchived ? 'Вернуть из архива' : 'Архивировать'}
         onPress={confirmArchive}
       />
-      <Button label="Удалить карточку" variant="danger" onPress={confirmDelete} />
+      <Button label="Убрать карточку…" variant="danger" onPress={confirmDelete} />
     </FormModal>
   );
 }

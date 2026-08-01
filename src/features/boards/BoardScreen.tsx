@@ -223,6 +223,7 @@ export function BoardScreen({ navigation, route }: Props) {
   const [formBusy, setFormBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [showLocallyHidden, setShowLocallyHidden] = useState(false);
   const [dragState, setDragState] = useState<typeof dragRef.current>(null);
 
   const snapshot = runtime.snapshot;
@@ -516,6 +517,14 @@ export function BoardScreen({ navigation, route }: Props) {
           variant="ghost"
           onPress={() => setShowArchived((current) => !current)}
         />
+        <Button
+          label={`Скрытые здесь${runtime.locallyHiddenCards.length
+            ? ` (${runtime.locallyHiddenCards.length})`
+            : ''}`}
+          compact
+          variant="ghost"
+          onPress={() => setShowLocallyHidden(true)}
+        />
       </View>
 
       {runtime.lastError && !runtime.failedCount ? (
@@ -642,6 +651,33 @@ export function BoardScreen({ navigation, route }: Props) {
       )}
 
       <FormModal
+        visible={showLocallyHidden}
+        title="Скрытые только здесь"
+        onClose={() => setShowLocallyHidden(false)}
+      >
+        <InlineNotice
+          text="Эти карточки остаются на других устройствах. Локальное скрытие не создаёт Nostr-событие."
+          tone="neutral"
+        />
+        {runtime.locallyHiddenCards.map((card) => (
+          <View key={card.id} style={styles.hiddenCardRow}>
+            <Text style={[styles.hiddenCardTitle, { color: colors.text }]} numberOfLines={2}>
+              {card.title}
+            </Text>
+            <Button
+              label="Вернуть"
+              compact
+              variant="ghost"
+              onPress={() => void runtime.restoreCardLocally(card.id)}
+            />
+          </View>
+        ))}
+        {!runtime.locallyHiddenCards.length ? (
+          <Text style={[styles.emptyColumn, { color: colors.muted }]}>Скрытых карточек нет</Text>
+        ) : null}
+      </FormModal>
+
+      <FormModal
         visible={Boolean(createCardColumnId)}
         title="Новая карточка"
         onClose={() => {
@@ -750,13 +786,26 @@ const styles = StyleSheet.create({
   boardTools: {
     minHeight: 36,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: spacing.sm,
   },
   dragHint: {
     flex: 1,
+    minWidth: '100%',
     fontSize: 11,
     lineHeight: 15,
+  },
+  hiddenCardRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  hiddenCardTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
   },
   columnsViewport: {
     flex: 1,
