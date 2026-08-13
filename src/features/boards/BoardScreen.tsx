@@ -20,6 +20,7 @@ import {
   updateColumn,
 } from '../../shared/api/endpoints';
 import type { BoardColumn, Card } from '../../shared/types/api';
+import { formatCountRu } from '../../shared/lib/russian';
 import {
   Button,
   Field,
@@ -434,16 +435,16 @@ export function BoardScreen({ navigation, route }: Props) {
       : 'Нет связи · изменения сохраняются на устройстве';
     syncTone = 'warning';
   } else if (runtime.failedCount) {
-    syncText = `${runtime.failedCount} изменений требуют проверки`;
+    syncText = `Требуют проверки: ${formatCountRu(runtime.failedCount, 'изменение', 'изменения', 'изменений')}`;
     syncTone = 'danger';
   } else if (runtime.flushing) {
     syncText = 'Отправляем сохранённые изменения';
     syncTone = 'neutral';
   } else if (runtime.pendingCount) {
-    syncText = `${runtime.pendingCount} изменений сохранено на устройстве`;
+    syncText = `Сохранено на устройстве: ${formatCountRu(runtime.pendingCount, 'изменение', 'изменения', 'изменений')}`;
     syncTone = 'warning';
   } else if (runtime.syncMode === 'roaming') {
-    syncText = `Независимая синхронизация · ${runtime.relayCount} релея`;
+    syncText = `Независимая синхронизация · ${formatCountRu(runtime.relayCount, 'реле', 'реле', 'реле')}`;
     syncTone = 'success';
   }
 
@@ -475,7 +476,7 @@ export function BoardScreen({ navigation, route }: Props) {
     <Screen contentStyle={styles.screen}>
       <ScreenHeader
         title={snapshot.board.name}
-        subtitle={`${columns.length} колонок · ${displayedCards.length} карточек`}
+        subtitle={`${formatCountRu(columns.length, 'колонка', 'колонки', 'колонок')} · ${formatCountRu(displayedCards.length, 'карточка', 'карточки', 'карточек')}`}
         onBack={() => navigation.goBack()}
         action={(
           <Button

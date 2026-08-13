@@ -2,7 +2,8 @@ import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useNetwork } from '../../app/NetworkProvider';
-import { ApiError, isNetworkError } from '../../shared/api/client';
+import { ApiError, getApiNodeOrigin, isNetworkError } from '../../shared/api/client';
+import { isPrivateNodeOrigin } from '../connection/connection';
 import {
   applyLocalCardVisibility,
   hideCardOnThisDevice,
@@ -193,7 +194,9 @@ function nextCardPosition(snapshot: LocalBoardSnapshot, columnId: string, cardId
 }
 
 export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardRuntime {
-  const { isOnline } = useNetwork();
+  const { isOnline, networkType } = useNetwork();
+  const preferRoaming = networkType === 'cellular'
+    && isPrivateNodeOrigin(getApiNodeOrigin());
   const [snapshot, setSnapshot] = useState<LocalBoardSnapshot | null>(null);
   const [operations, setOperations] = useState<LocalOperation[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -264,6 +267,8 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
           }
         }
 
+        if (preferRoaming && relaySucceeded) return;
+
         try {
           await touchWorkspaceSync(workspaceId).catch(() => null);
           const [coordinatorSnapshot, allOperations] = await Promise.all([
@@ -311,7 +316,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     } finally {
       setRefreshing(false);
     }
-  }, [applyState, boardId, isOnline, runSerialized, workspaceId]);
+  }, [applyState, boardId, isOnline, preferRoaming, runSerialized, workspaceId]);
 
   const flush = useCallback(async () => {
     if (!isOnline || flushLock.current) return;
@@ -347,6 +352,15 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
             setRelayCount(capability.relays.length);
             return true;
           };
+
+          if (preferRoaming && capability) {
+            try {
+              if (await publishFallback()) continue;
+            } catch (error) {
+              setLastError(message(error));
+              break;
+            }
+          }
 
           if (nodeUnavailableUntilRef.current > Date.now()) {
             try {
@@ -506,7 +520,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
       flushLock.current = false;
       setFlushing(false);
     }
-  }, [applyState, boardId, isOnline, runSerialized]);
+  }, [applyState, boardId, isOnline, preferRoaming, runSerialized]);
 
   useEffect(() => {
     let active = true;

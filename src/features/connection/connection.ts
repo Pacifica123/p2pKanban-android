@@ -28,9 +28,30 @@ export function normalizeNodeOrigin(input: string) {
   return parsed.origin;
 }
 
+export function isPrivateNodeOrigin(origin: string | null) {
+  if (!origin) return false;
+  let hostname: string;
+  try {
+    hostname = new URL(origin).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return false;
+  }
+  if (hostname === 'localhost' || hostname.endsWith('.local')) return true;
+  if (hostname === '::1' || hostname.startsWith('fc') || hostname.startsWith('fd')) return true;
+  const octets = hostname.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((value) => !Number.isInteger(value))) return false;
+  const [first = -1, second = -1] = octets;
+  return first === 10
+    || first === 127
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 192 && second === 168)
+    || (first === 169 && second === 254);
+}
+
 interface ProbeResponse {
   ok: boolean;
   status: number;
+  json?: () => Promise<unknown>;
 }
 
 type ProbeFetch = (url: string, init?: RequestInit) => Promise<ProbeResponse>;
@@ -49,7 +70,19 @@ export async function probeNode(origin: string, fetcher: ProbeFetch = fetch) {
         signal: controller.signal,
       });
       lastStatus = response.status;
-      if (response.ok) return;
+      if (response.ok) {
+        if (!response.json) return null;
+        try {
+          const body = await response.json() as {
+            version?: unknown;
+            data?: { version?: unknown };
+          };
+          const version = body.data?.version ?? body.version;
+          return typeof version === 'string' ? version : null;
+        } catch {
+          return null;
+        }
+      }
     } catch {
       // The next known health endpoint may still be valid.
     } finally {

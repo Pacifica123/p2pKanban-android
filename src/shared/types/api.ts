@@ -235,3 +235,10 @@ export interface RoamingCapabilityResponse {
   minimumRelayAcks: number;
   provisionedAt: string;
 }
+
+export interface BackendVersionResponse {
+  status: string;
+  service: string;
+  version: string;
+  env: string;
+}

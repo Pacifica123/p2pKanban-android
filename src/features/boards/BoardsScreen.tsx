@@ -18,6 +18,7 @@ import {
   saveCachedBoards,
 } from '../../shared/storage/storage';
 import type { Board } from '../../shared/types/api';
+import { formatCountRu } from '../../shared/lib/russian';
 import {
   Button,
   Field,
@@ -175,14 +176,14 @@ export function BoardsScreen({ navigation, route }: Props) {
       ) : null}
       {primeState.status === 'done' && primeState.result?.failed ? (
         <InlineNotice
-          text={`${primeState.result.failed} досок пока не удалось подготовить. Повторим при следующей связи с узлом.`}
+          text={`${formatCountRu(primeState.result.failed, 'доску', 'доски', 'досок')} пока не удалось подготовить. Повторим при следующей связи с узлом.`}
           tone="warning"
         />
       ) : null}
 
       <View style={styles.toolbar}>
         <Text style={[styles.summary, { color: colors.muted }]}>
-          {items.length} {items.length === 1 ? 'доска' : 'досок'}
+          {formatCountRu(items.length, 'доска', 'доски', 'досок')}
         </Text>
         <Button
           label="Создать"

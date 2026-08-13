@@ -6,6 +6,7 @@ import { useNetwork } from '../../app/NetworkProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
 import { getBoardActivity } from '../../shared/api/endpoints';
+import { activityLabel, changedFieldsLabel } from '../../shared/lib/russian';
 import {
   Button,
   InlineNotice,
@@ -15,18 +16,6 @@ import {
 } from '../../shared/ui/primitives';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Activity'>;
-
-const labels: Record<string, string> = {
-  'board.created': 'Доска создана',
-  'board.updated': 'Доска изменена',
-  'card.archived': 'Карточка архивирована',
-  'card.created': 'Карточка создана',
-  'card.moved': 'Карточка перемещена',
-  'card.updated': 'Карточка изменена',
-  'column.created': 'Колонка создана',
-  'column.deleted': 'Колонка удалена',
-  'column.updated': 'Колонка изменена',
-};
 
 function dateTime(value: string) {
   try {
@@ -69,27 +58,30 @@ export function ActivityScreen({ navigation, route }: Props) {
         <StateView title="История пока пустая" />
       ) : null}
       <View style={styles.list}>
-        {query.data?.items.map((entry) => (
-          <View
-            key={entry.id}
-            style={[
-              styles.entry,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-            ]}
-          >
-            <Text style={[styles.entryTitle, { color: colors.text }]}>
-              {labels[entry.kind] || entry.kind.replaceAll('.', ' · ')}
-            </Text>
-            <Text style={[styles.entryMeta, { color: colors.muted }]}>
-              {entry.actor.displayName || 'Система'} · {dateTime(entry.createdAt)}
-            </Text>
-            {entry.fieldMask.length ? (
-              <Text style={[styles.entryFields, { color: colors.muted }]}>
-                Изменено: {entry.fieldMask.join(', ')}
+        {query.data?.items.map((entry) => {
+          const changedFields = changedFieldsLabel(entry.fieldMask);
+          return (
+            <View
+              key={entry.id}
+              style={[
+                styles.entry,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+              ]}
+            >
+              <Text style={[styles.entryTitle, { color: colors.text }]}>
+                {activityLabel(entry.kind)}
               </Text>
-            ) : null}
-          </View>
-        ))}
+              <Text style={[styles.entryMeta, { color: colors.muted }]}>
+                {entry.actor.displayName || 'Система'} · {dateTime(entry.createdAt)}
+              </Text>
+              {changedFields ? (
+                <Text style={[styles.entryFields, { color: colors.muted }]}>
+                  Изменено: {changedFields}
+                </Text>
+              ) : null}
+            </View>
+          );
+        })}
       </View>
     </Screen>
   );

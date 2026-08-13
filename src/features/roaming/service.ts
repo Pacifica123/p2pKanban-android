@@ -48,7 +48,7 @@ function validateCapability(capability: RoamingCapability) {
     throw new Error('Ключ доски не соответствует её анонимному тегу.');
   }
   if (capability.relays.length < 2) {
-    throw new Error('Для независимой доски нужны хотя бы два релея.');
+    throw new Error('Для независимой доски нужны хотя бы два реле.');
   }
   return key;
 }
@@ -73,6 +73,65 @@ function fieldsFor(operation: LocalOperation) {
   if (operation.kind === 'card.update') return Object.keys(operation.payload.input);
   if (operation.kind === 'card.move') return ['columnId', 'position', 'updatedAt'];
   return ['isArchived', 'archivedAt', 'updatedAt'];
+}
+
+function checklistDeltaFor(
+  operation: LocalOperation,
+  checklists: NonNullable<LocalBoardSnapshot['checklistsByCardId'][string]>,
+) {
+  if (!isChecklistOperation(operation)) return null;
+  const cardId = operationCardId(operation);
+  if (operation.kind === 'checklist.delete') {
+    return {
+      kind: 'checklist.delete',
+      cardId,
+      checklistId: operation.entityId,
+      fieldMask: ['__lifecycle'],
+      deletedAt: operation.createdAt,
+    };
+  }
+  if (operation.kind === 'checklist.item.delete') {
+    return {
+      kind: 'checklist_item.delete',
+      cardId,
+      checklistId: operation.payload.checklistId,
+      itemId: operation.entityId,
+      fieldMask: ['__lifecycle'],
+      deletedAt: operation.createdAt,
+    };
+  }
+
+  const checklistId = operation.kind === 'checklist.item.create'
+    || operation.kind === 'checklist.item.update'
+    ? operation.payload.checklistId
+    : operation.entityId;
+  const checklist = checklists.find((candidate) => candidate.id === checklistId);
+  if (!checklist) throw new Error('Чек-лист для relay-события не найден.');
+
+  if (operation.kind === 'checklist.create' || operation.kind === 'checklist.update') {
+    return {
+      kind: 'checklist.put',
+      cardId,
+      checklistId,
+      fieldMask: operation.kind === 'checklist.create'
+        ? ['*']
+        : Object.keys(operation.payload.input),
+      checklist: { ...checklist, items: [] },
+    };
+  }
+
+  const item = checklist.items.find((candidate) => candidate.id === operation.entityId);
+  if (!item) throw new Error('Пункт чек-листа для relay-события не найден.');
+  return {
+    kind: 'checklist_item.put',
+    cardId,
+    checklistId,
+    itemId: item.id,
+    fieldMask: operation.kind === 'checklist.item.create'
+      ? ['*']
+      : Object.keys(operation.payload.input),
+    item,
+  };
 }
 
 function eventForCard(input: {
@@ -101,6 +160,7 @@ function eventForCard(input: {
       occurredAt: input.operation.createdAt,
     };
   }
+  const checklistDelta = checklistDeltaFor(input.operation, input.checklists || []);
   return {
     protocolVersion: ROAMING_PROTOCOL_VERSION,
     eventId: input.operation.id,
@@ -115,7 +175,7 @@ function eventForCard(input: {
     fieldMask: fieldsFor(input.operation),
     payload: {
       card: input.card,
-      checklists: input.checklists,
+      ...(checklistDelta ? { checklistDelta } : {}),
     },
     occurredAt: input.operation.createdAt,
   };

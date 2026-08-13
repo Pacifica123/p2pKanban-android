@@ -5,9 +5,13 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 
 interface NetworkContextValue {
   isOnline: boolean;
+  networkType: string;
 }
 
-const NetworkContext = createContext<NetworkContextValue>({ isOnline: true });
+const NetworkContext = createContext<NetworkContextValue>({
+  isOnline: true,
+  networkType: 'unknown',
+});
 
 function connected(value: { isConnected: boolean | null; isInternetReachable: boolean | null }) {
   return value.isConnected !== false && value.isInternetReachable !== false;
@@ -15,22 +19,25 @@ function connected(value: { isConnected: boolean | null; isInternetReachable: bo
 
 export function NetworkProvider({ children }: PropsWithChildren) {
   const [isOnline, setOnline] = useState(true);
+  const [networkType, setNetworkType] = useState('unknown');
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state) => {
       const next = connected(state);
       setOnline(next);
+      setNetworkType(state.type);
       onlineManager.setOnline(next);
     });
     void NetInfo.fetch().then((state) => {
       const next = connected(state);
       setOnline(next);
+      setNetworkType(state.type);
       onlineManager.setOnline(next);
     });
     return unsubscribe;
   }, []);
 
-  const value = useMemo(() => ({ isOnline }), [isOnline]);
+  const value = useMemo(() => ({ isOnline, networkType }), [isOnline, networkType]);
   return <NetworkContext.Provider value={value}>{children}</NetworkContext.Provider>;
 }
 

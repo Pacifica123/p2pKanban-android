@@ -19,11 +19,11 @@ const packageJson = JSON.parse(read('package.json'));
 const packageLock = JSON.parse(read('package-lock.json'));
 const appJson = JSON.parse(read('app.json'));
 if (
-  packageJson.version !== '1.5.0-mobile.6'
+  packageJson.version !== '1.5.0-mobile.7'
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
-  || appJson.expo.version !== '1.5.0'
-  || appJson.expo.android.versionCode !== 6
+  || appJson.expo.version !== '1.5.0-mobile.7'
+  || appJson.expo.android.versionCode !== 7
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }
@@ -93,9 +93,12 @@ requireText('src/features/localFirst/localVisibility.ts', [
   'applyLocalCardVisibility',
   'reconcileHiddenCardsWithCoordinator',
 ]);
+requireText('src/features/sync/syncService.ts', [
+  "appVersion: '1.5.0-mobile.7'",
+]);
 requireText('android/app/build.gradle', [
-  'versionCode 6',
-  'versionName "1.5.0"',
+  'versionCode 7',
+  'versionName "1.5.0-mobile.7"',
 ]);
 
-console.log('OK: Android CRUD, scoped card deletion, roaming tombstones and drag contract are aligned');
+console.log('OK: Android CRUD, scoped deletion, roaming deltas, versions and drag contract are aligned');

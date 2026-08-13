@@ -5,6 +5,7 @@ import type {
   BoardLabel,
   BoardLabelListResponse,
   BoardListResponse,
+  BackendVersionResponse,
   Card,
   CardListResponse,
   Checklist,
@@ -22,6 +23,10 @@ import type {
   WorkspaceListResponse,
 } from '../types/api';
 import { apiRequest } from './client';
+
+export function getBackendVersion() {
+  return apiRequest<BackendVersionResponse>('/health', {}, { skipRefresh: true });
+}
 
 export function nativeSignIn(input: { email: string; password: string }) {
   return apiRequest<NativeAuthSuccessResponse>(

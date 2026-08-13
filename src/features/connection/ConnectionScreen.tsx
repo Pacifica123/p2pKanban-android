@@ -36,8 +36,9 @@ export function ConnectionScreen() {
       <View style={styles.hero}>
         <Text style={[styles.brand, { color: colors.accent }]}>p2pKanban</Text>
         <Text style={[styles.title, { color: colors.text }]}>Подключение к узлу</Text>
-        <Text style={[styles.subtitle, { color: colors.muted }]}>
-          Приложение подключается к вашему запущенному p2pKanban, а не к общему облаку.
+        <Text style={[styles.subtitle, { color: colors.muted }]}> 
+          Для первой привязки приложение подключается к вашему узлу. Подготовленные доски затем
+          синхронизируются через зашифрованный relay-журнал из любой сети.
         </Text>
       </View>
 
@@ -70,8 +71,8 @@ export function ConnectionScreen() {
           python bootstrap.py start --listen lan
         </Text>
         <Text style={[styles.helpText, { color: colors.muted }]}>
-          Телефон и компьютер должны видеть друг друга в одной доверенной сети. Для Android
-          Emulator вместо адреса компьютера обычно используется 10.0.2.2.
+          Общая доверенная сеть нужна только для первой привязки аккаунта и получения ключей досок.
+          Для Android Emulator вместо адреса компьютера обычно используется 10.0.2.2.
         </Text>
       </Panel>
     </Screen>

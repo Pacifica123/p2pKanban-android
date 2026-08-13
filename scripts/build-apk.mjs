@@ -1,9 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const mobileRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const packageVersion = JSON.parse(
+  readFileSync(join(mobileRoot, 'package.json'), 'utf8'),
+).version;
 const isWindows = process.platform === 'win32';
 const npx = isWindows ? 'npx.cmd' : 'npx';
 
@@ -33,7 +36,7 @@ if (isWindows) {
 }
 
 const source = join(mobileRoot, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk');
-const destination = join(mobileRoot, 'dist', 'p2pKanban-mobile-1.5.0.apk');
+const destination = join(mobileRoot, 'dist', `p2pKanban-${packageVersion}.apk`);
 if (!existsSync(source)) {
   console.error(`Gradle завершился без ожидаемого APK: ${source}`);
   process.exit(3);

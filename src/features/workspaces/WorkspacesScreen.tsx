@@ -18,6 +18,7 @@ import {
   saveCachedWorkspaces,
 } from '../../shared/storage/storage';
 import type { Workspace } from '../../shared/types/api';
+import { formatCountRu } from '../../shared/lib/russian';
 import {
   Button,
   Field,
@@ -166,7 +167,7 @@ export function WorkspacesScreen({ navigation }: Props) {
 
       <View style={styles.toolbar}>
         <Text style={[styles.summary, { color: colors.muted }]}>
-          {items.length} {items.length === 1 ? 'пространство' : 'пространств'}
+          {formatCountRu(items.length, 'пространство', 'пространства', 'пространств')}
         </Text>
         <Button
           label="Создать"

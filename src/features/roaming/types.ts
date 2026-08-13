@@ -49,6 +49,8 @@ export interface RoamingApplyState {
   seenEventIds: string[];
   fieldVersions: Record<string, RoamingVersionStamp>;
   tombstones: Record<string, RoamingVersionStamp>;
+  checklistTombstones: Record<string, RoamingVersionStamp>;
+  checklistItemTombstones: Record<string, RoamingVersionStamp>;
   lastRelayPullAt: number;
 }
 

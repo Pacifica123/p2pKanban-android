@@ -104,7 +104,7 @@ export async function publishToRelays(
   const failedRelays = relays.filter((relay) => !acceptedRelays.includes(relay));
   if (acceptedRelays.length < Math.min(minimumAcks, relays.length)) {
     throw new Error(
-      `Журнал принят только ${acceptedRelays.length} из ${Math.min(minimumAcks, relays.length)} нужных релеев.`,
+      `Relay-журнал принят: ${acceptedRelays.length} из ${Math.min(minimumAcks, relays.length)} обязательных подтверждений.`,
     );
   }
   return { acceptedRelays, failedRelays };

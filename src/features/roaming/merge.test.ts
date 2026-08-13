@@ -111,6 +111,136 @@ test('roaming card bundle carries checklist items', () => {
   expect(result.snapshot?.checklistsByCardId[cardId]?.[0]?.items[0]?.isDone).toBe(true);
 });
 
+test('legacy stale snapshot cannot delete a checklist item that it does not contain', () => {
+  const checklistId = '018f22e2-355a-7ba2-8ef0-d7bc788ceecd';
+  const first = event(10, 'replica-a', 'исходная');
+  first.fieldMask = ['checklists'];
+  first.payload = {
+    card: card('исходная'),
+    checklists: [{
+      id: checklistId,
+      cardId,
+      title: 'Релиз',
+      position: 1000,
+      createdAt: first.occurredAt,
+      updatedAt: first.occurredAt,
+      items: [{
+        id: '018f22e2-355a-7ba2-8ef0-d7bc788ceece',
+        checklistId,
+        title: 'Первый',
+        isDone: false,
+        position: 1000,
+        createdAt: first.occurredAt,
+        updatedAt: first.occurredAt,
+      }, {
+        id: '018f22e2-355a-7ba2-8ef0-d7bc788ceecf',
+        checklistId,
+        title: 'Второй',
+        isDone: false,
+        position: 2000,
+        createdAt: first.occurredAt,
+        updatedAt: first.occurredAt,
+      }],
+    }],
+  };
+  const stale = event(11, 'replica-b', 'исходная');
+  stale.fieldMask = ['checklists'];
+  stale.payload = {
+    card: card('исходная'),
+    checklists: [{
+      id: checklistId,
+      cardId,
+      title: 'Релиз',
+      position: 1000,
+      createdAt: first.occurredAt,
+      updatedAt: stale.occurredAt,
+      items: [{
+        id: '018f22e2-355a-7ba2-8ef0-d7bc788ceece',
+        checklistId,
+        title: 'Устаревшее название',
+        isDone: true,
+        position: 1000,
+        createdAt: first.occurredAt,
+        updatedAt: stale.occurredAt,
+      }],
+    }],
+  };
+
+  const seeded = applyRoamingEvents(snapshot(), EMPTY_ROAMING_APPLY_STATE, [first]);
+  const result = applyRoamingEvents(seeded.snapshot, seeded.state, [stale]);
+  const items = result.snapshot?.checklistsByCardId[cardId]?.[0]?.items;
+  expect(items).toHaveLength(2);
+  expect(items?.[0]?.title).toBe('Первый');
+  expect(items?.[0]?.isDone).toBe(false);
+});
+
+test('checklist item deltas merge independently and explicit delete wins', () => {
+  const checklistId = '018f22e2-355a-7ba2-8ef0-d7bc788ceecd';
+  const checklistCreate = event(10, 'replica-a', 'исходная');
+  checklistCreate.fieldMask = ['checklists'];
+  checklistCreate.payload = {
+    card: card('исходная'),
+    checklistDelta: {
+      kind: 'checklist.put',
+      cardId,
+      checklistId,
+      fieldMask: ['*'],
+      checklist: {
+        id: checklistId,
+        cardId,
+        title: 'Релиз',
+        position: 1000,
+        items: [],
+        createdAt: checklistCreate.occurredAt,
+        updatedAt: checklistCreate.occurredAt,
+      },
+    },
+  };
+  const itemId = '018f22e2-355a-7ba2-8ef0-d7bc788ceece';
+  const itemCreate = event(11, 'replica-b', 'исходная');
+  itemCreate.fieldMask = ['checklists'];
+  itemCreate.payload = {
+    card: card('исходная'),
+    checklistDelta: {
+      kind: 'checklist_item.put',
+      cardId,
+      checklistId,
+      itemId,
+      fieldMask: ['*'],
+      item: {
+        id: itemId,
+        checklistId,
+        title: 'Первый',
+        isDone: false,
+        position: 1000,
+        createdAt: itemCreate.occurredAt,
+        updatedAt: itemCreate.occurredAt,
+      },
+    },
+  };
+  const itemDelete = event(12, 'replica-a', 'исходная');
+  itemDelete.fieldMask = ['checklists'];
+  itemDelete.payload = {
+    card: card('исходная'),
+    checklistDelta: {
+      kind: 'checklist_item.delete',
+      cardId,
+      checklistId,
+      itemId,
+      fieldMask: ['__lifecycle'],
+      deletedAt: itemDelete.occurredAt,
+    },
+  };
+
+  const result = applyRoamingEvents(snapshot(), EMPTY_ROAMING_APPLY_STATE, [
+    checklistCreate,
+    itemCreate,
+    itemDelete,
+  ]);
+  expect(result.snapshot?.checklistsByCardId[cardId]?.[0]?.items).toEqual([]);
+  expect(result.state.checklistItemTombstones[itemId]).toBeDefined();
+});
+
 test('card tombstone wins over later stale card.put and prevents resurrection', () => {
   const deleted = event(10, 'replica-a', 'удалена');
   deleted.operation = 'card.delete';

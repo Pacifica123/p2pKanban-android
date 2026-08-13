@@ -1,5 +1,6 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
@@ -15,6 +16,8 @@ import {
 } from '../../shared/ui/primitives';
 import { useAuth } from '../auth/AuthProvider';
 import { useConnection } from '../connection/ConnectionProvider';
+import { getBackendVersion } from '../../shared/api/endpoints';
+import { mobileClientVersion } from '../../shared/version';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Settings'>;
 
@@ -24,6 +27,19 @@ export function SettingsScreen({ navigation }: Props) {
   const connection = useConnection();
   const { isOnline } = useNetwork();
   const [busy, setBusy] = useState(false);
+  const backendVersion = useQuery({
+    queryKey: ['backend-version', connection.nodeOrigin],
+    queryFn: getBackendVersion,
+    enabled: isOnline && Boolean(connection.nodeOrigin),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  useEffect(() => {
+    if (backendVersion.data?.version) {
+      void connection.rememberBackendVersion(backendVersion.data.version);
+    }
+  }, [backendVersion.data?.version]);
 
   async function run(action: () => Promise<void>) {
     if (busy) return;
@@ -100,7 +116,8 @@ export function SettingsScreen({ navigation }: Props) {
           {connection.nodeOrigin}
         </Text>
         <Text style={[styles.caption, { color: colors.muted }]}>
-          Android-клиент хранит адрес отдельно от данных аккаунта. При смене узла кэши не смешиваются.
+          Android-клиент хранит адрес отдельно от данных аккаунта. В мобильной сети подготовленные
+          доски обходят недоступный LAN-адрес и сразу используют relay.
         </Text>
         <Button label="Сменить узел" variant="danger" disabled={busy} onPress={confirmSwitchNode} />
       </Panel>
@@ -121,9 +138,23 @@ export function SettingsScreen({ navigation }: Props) {
         />
       </Panel>
 
-      <Text style={[styles.version, { color: colors.muted }]}>
-        p2pKanban Android · 1.5.0-mobile.6
-      </Text>
+      <Panel style={styles.panel}>
+        <SectionTitle title="Версии" />
+        <View style={styles.versionRow}>
+          <Text style={[styles.caption, { color: colors.muted }]}>Android-клиент</Text>
+          <Text style={[styles.versionValue, { color: colors.text }]} selectable>
+            {mobileClientVersion}
+          </Text>
+        </View>
+        <View style={styles.versionRow}>
+          <Text style={[styles.caption, { color: colors.muted }]}>Backend подключённого узла</Text>
+          <Text style={[styles.versionValue, { color: colors.text }]} selectable>
+            {backendVersion.data?.version
+              || connection.backendVersion
+              || (backendVersion.isFetching ? 'проверяем…' : 'недоступен')}
+          </Text>
+        </View>
+      </Panel>
     </Screen>
   );
 }
@@ -150,9 +181,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
-  version: {
-    textAlign: 'center',
-    fontSize: 12,
-    paddingVertical: spacing.md,
+  versionRow: {
+    gap: spacing.xs,
+  },
+  versionValue: {
+    fontSize: 14,
+    fontFamily: 'monospace',
   },
 });

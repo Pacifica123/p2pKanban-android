@@ -9,6 +9,7 @@ import type {
 
 const ROOT = '@p2pkanban/mobile/v1';
 const NODE_KEY = `${ROOT}/config/node-origin`;
+const NODE_VERSION_PREFIX = `${ROOT}/config/backend-version/`;
 const SESSION_PREFIX = `${ROOT}/session/`;
 const SESSION_KEY = 'p2pkanban.mobile.native-session.v1';
 
@@ -27,6 +28,18 @@ export async function saveNodeOrigin(origin: string) {
 
 export async function forgetNodeOrigin() {
   await AsyncStorage.removeItem(NODE_KEY);
+}
+
+function backendVersionKey(origin: string) {
+  return `${NODE_VERSION_PREFIX}${encodeURIComponent(origin)}`;
+}
+
+export async function loadKnownBackendVersion(origin: string) {
+  return AsyncStorage.getItem(backendVersionKey(origin));
+}
+
+export async function saveKnownBackendVersion(origin: string, version: string) {
+  await AsyncStorage.setItem(backendVersionKey(origin), version);
 }
 
 export async function loadStoredSession() {
