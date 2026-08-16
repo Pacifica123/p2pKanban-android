@@ -1,5 +1,7 @@
 import { useColorScheme } from 'react-native';
 
+import { useAppearance } from '../features/appearance/AppearanceProvider';
+
 export interface AppColors {
   background: string;
   surface: string;
@@ -16,7 +18,7 @@ export interface AppColors {
   overlay: string;
 }
 
-const light: AppColors = {
+export const lightColors: AppColors = {
   background: '#f2f2ee',
   surface: '#ffffff',
   surfaceMuted: '#e9e9e4',
@@ -32,7 +34,7 @@ const light: AppColors = {
   overlay: 'rgba(20, 18, 28, 0.58)',
 };
 
-const dark: AppColors = {
+export const darkColors: AppColors = {
   background: '#17151f',
   surface: '#211e2b',
   surfaceMuted: '#2a2635',
@@ -49,7 +51,13 @@ const dark: AppColors = {
 };
 
 export function useAppColors() {
-  return useColorScheme() === 'dark' ? dark : light;
+  return useResolvedTheme() === 'dark' ? darkColors : lightColors;
+}
+
+export function useResolvedTheme() {
+  const systemTheme = useColorScheme() === 'dark' ? 'dark' : 'light';
+  const { preferences } = useAppearance();
+  return preferences.appTheme === 'system' ? systemTheme : preferences.appTheme;
 }
 
 export const spacing = {

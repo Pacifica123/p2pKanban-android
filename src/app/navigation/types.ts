@@ -10,6 +10,7 @@ export type RootStackParamList = {
     workspaceId: string;
     boardId: string;
     boardName: string;
+    focusCardId?: string;
   };
   Activity: {
     boardId: string;

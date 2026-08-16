@@ -29,6 +29,17 @@ import {
   InlineNotice,
   SectionTitle,
 } from '../../shared/ui/primitives';
+import {
+  quickReminder,
+  reminderFields,
+  reminderFromFields,
+} from '../reminders/model';
+import { loadCardReminder } from '../reminders/storage';
+import {
+  cancelCardReminder,
+  scheduleCardReminder,
+  updateCardReminderTitle,
+} from '../reminders/service';
 
 const statuses: Array<{ value: CardStatus; label: string }> = [
   { value: 'active', label: 'Активно' },
@@ -144,6 +155,9 @@ export function CardDetailsModal({
   } | null>(null);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [editingComment, setEditingComment] = useState<{ id: string; body: string } | null>(null);
+  const [reminderDate, setReminderDate] = useState('');
+  const [reminderTime, setReminderTime] = useState('');
+  const [hasReminder, setHasReminder] = useState(false);
   const checklists = card ? runtime.getCardChecklists(card.id) : [];
 
   const loadCoordinatorExtras = useCallback(async (currentCard: Card) => {
@@ -165,6 +179,7 @@ export function CardDetailsModal({
 
   useEffect(() => {
     if (!card) return;
+    let active = true;
     setTitle(card.title);
     setDescription(card.description || '');
     setStatus(card.status || 'active');
@@ -176,6 +191,16 @@ export function CardDetailsModal({
     setEditingLabel(null);
     setEditingComment(null);
     void loadCoordinatorExtras(card);
+    void loadCardReminder(card.id).then((reminder) => {
+      if (!active) return;
+      const fields = reminderFields(reminder?.localDateTime);
+      setReminderDate(fields.date);
+      setReminderTime(fields.time);
+      setHasReminder(Boolean(reminder));
+    });
+    return () => {
+      active = false;
+    };
   }, [card?.id, loadCoordinatorExtras]);
 
   async function run(key: string, action: () => Promise<void>) {
@@ -200,10 +225,45 @@ export function CardDetailsModal({
         status,
         priority,
       });
+      await updateCardReminderTitle(card.id, title.trim());
       if (columnId && columnId !== card.columnId) {
         await runtime.moveCard(card.id, columnId);
       }
       onClose();
+    });
+  }
+
+  function applyQuickReminder(kind: 'hour' | 'tomorrow') {
+    const fields = reminderFields(quickReminder(kind));
+    setReminderDate(fields.date);
+    setReminderTime(fields.time);
+  }
+
+  async function saveReminder() {
+    if (!card || !runtime.snapshot) return;
+    const localDateTime = reminderFromFields(reminderDate, reminderTime);
+    if (!localDateTime) {
+      setError('Введите дату как ДД.ММ.ГГГГ, а время как ЧЧ:ММ.');
+      return;
+    }
+    await run('reminder.save', async () => {
+      await scheduleCardReminder({
+        cardId: card.id,
+        boardId: card.boardId,
+        boardName: runtime.snapshot!.board.name,
+        workspaceId: runtime.snapshot!.workspaceId,
+        cardTitle: title.trim() || card.title,
+        localDateTime,
+      });
+      setHasReminder(true);
+    });
+  }
+
+  async function removeReminder() {
+    if (!card) return;
+    await run('reminder.cancel', async () => {
+      await cancelCardReminder(card.id);
+      setHasReminder(false);
     });
   }
 
@@ -244,6 +304,7 @@ export function CardDetailsModal({
           onPress: () => {
             void run('card.hide-local', async () => {
               await runtime.hideCardLocally(card.id);
+              await cancelCardReminder(card.id);
               onClose();
             });
           },
@@ -263,6 +324,7 @@ export function CardDetailsModal({
                   onPress: () => {
                     void run('card.delete', async () => {
                       await runtime.deleteCard(card.id);
+                      await cancelCardReminder(card.id);
                       onClose();
                     });
                   },
@@ -466,6 +528,59 @@ export function CardDetailsModal({
         multiline
         placeholder="Что нужно сделать"
       />
+
+      <View style={styles.section}>
+        <SectionTitle
+          title="Напоминание"
+          detail={hasReminder ? 'включено' : 'выключено'}
+        />
+        <InlineNotice
+          text="Только на этом устройстве и по его локальным дате и времени. На другие узлы и в relay настройка не отправляется."
+          tone="neutral"
+        />
+        <View style={styles.reminderFields}>
+          <View style={styles.reminderField}>
+            <Field
+              label="Дата"
+              value={reminderDate}
+              keyboardType="numbers-and-punctuation"
+              placeholder="ДД.ММ.ГГГГ"
+              onChangeText={setReminderDate}
+            />
+          </View>
+          <View style={styles.reminderTimeField}>
+            <Field
+              label="Время"
+              value={reminderTime}
+              keyboardType="numbers-and-punctuation"
+              placeholder="ЧЧ:ММ"
+              onChangeText={setReminderTime}
+            />
+          </View>
+        </View>
+        <View style={styles.inlineActions}>
+          <Button label="Через час" compact variant="ghost" onPress={() => applyQuickReminder('hour')} />
+          <Button label="Завтра 09:00" compact variant="ghost" onPress={() => applyQuickReminder('tomorrow')} />
+        </View>
+        <View style={styles.inlineActions}>
+          <Button
+            label={hasReminder ? 'Обновить' : 'Запланировать'}
+            compact
+            variant="primary"
+            loading={busyKey === 'reminder.save'}
+            onPress={() => void saveReminder()}
+          />
+          {hasReminder ? (
+            <Button
+              label="Выключить"
+              compact
+              variant="danger"
+              loading={busyKey === 'reminder.cancel'}
+              onPress={() => void removeReminder()}
+            />
+          ) : null}
+        </View>
+      </View>
 
       <View style={styles.section}>
         <SectionTitle
@@ -827,6 +942,16 @@ export function CardDetailsModal({
 const styles = StyleSheet.create({
   section: {
     gap: spacing.sm,
+  },
+  reminderFields: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  reminderField: {
+    flex: 1.45,
+  },
+  reminderTimeField: {
+    flex: 1,
   },
   choices: {
     flexDirection: 'row',

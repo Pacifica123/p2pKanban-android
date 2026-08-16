@@ -32,6 +32,7 @@ import {
 } from '../../shared/storage/storage';
 import type { AuthUser, NativeAuthSuccessResponse } from '../../shared/types/api';
 import { useConnection } from '../connection/ConnectionProvider';
+import { cancelAllCardReminders } from '../reminders/service';
 
 type AuthStatus = 'loading' | 'authenticated' | 'anonymous';
 
@@ -86,6 +87,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   }, [applyStoredSession]);
 
   const clearInvalidSession = useCallback(async () => {
+    await cancelAllCardReminders().catch(() => null);
     await clearSessionBoundStorage();
     applyStoredSession(null);
     setOfflineSession(false);
@@ -186,6 +188,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const prepareNewIdentity = useCallback(async (nextUserId: string) => {
     const previous = await loadStoredSession();
     if (previous && previous.user.id !== nextUserId) {
+      await cancelAllCardReminders().catch(() => null);
       await clearSessionBoundStorage();
       queryClient.clear();
     }
@@ -193,6 +196,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const clearExplicitly = useCallback(async () => {
     ++generationRef.current;
+    await cancelAllCardReminders().catch(() => null);
     await clearSessionBoundStorage();
     queryClient.clear();
     applyStoredSession(null);

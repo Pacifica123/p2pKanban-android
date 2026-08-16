@@ -7,6 +7,7 @@ import {
   type LocalBoardSnapshot,
   type LocalOperation,
 } from './model';
+import { defaultBoardAppearance } from '../appearance/boardTheme';
 
 const QUEUE_SUFFIX = 'local-first/operations';
 
@@ -32,17 +33,19 @@ export async function loadBoardSnapshot(boardId: string) {
   const raw = await AsyncStorage.getItem(sessionStorageKey(snapshotSuffix(boardId)));
   const snapshot = parse<(Omit<
     LocalBoardSnapshot,
-    'schemaVersion' | 'checklistsByCardId' | 'checklistsHydratedAt'
+    'schemaVersion' | 'appearance' | 'checklistsByCardId' | 'checklistsHydratedAt'
   > & {
     schemaVersion: number;
+    appearance?: LocalBoardSnapshot['appearance'];
     checklistsByCardId?: LocalBoardSnapshot['checklistsByCardId'];
     checklistsHydratedAt?: string | null;
   }) | null>(raw, null);
   if (!snapshot || !snapshot.board?.id) return null;
-  if (![1, 2, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
+  if (![1, 2, 3, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
   const migrated: LocalBoardSnapshot = {
     ...snapshot,
     schemaVersion: LOCAL_SCHEMA_VERSION,
+    appearance: snapshot.appearance || defaultBoardAppearance(snapshot.board.id),
     checklistsByCardId: snapshot.checklistsByCardId || {},
     checklistsHydratedAt: snapshot.checklistsHydratedAt || null,
   };

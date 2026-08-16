@@ -17,6 +17,7 @@ import {
   type LocalBoardSnapshot,
   type LocalOperation,
 } from './model';
+import { defaultBoardAppearance } from '../appearance/boardTheme';
 
 const board: Board = {
   id: 'board-1',
@@ -49,6 +50,7 @@ function snapshot(cards: Card[] = []): LocalBoardSnapshot {
     schemaVersion: LOCAL_SCHEMA_VERSION,
     workspaceId: board.workspaceId,
     board,
+    appearance: defaultBoardAppearance(board.id),
     columns: [columnA, columnB],
     cards,
     checklistsByCardId: {},

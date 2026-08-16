@@ -1,17 +1,19 @@
 import type {
   Board,
+  BoardAppearanceSettings,
   BoardColumn,
   Card,
   Checklist,
   ChecklistItem,
 } from '../../shared/types/api';
 
-export const LOCAL_SCHEMA_VERSION = 3;
+export const LOCAL_SCHEMA_VERSION = 4;
 
 export interface LocalBoardSnapshot {
   schemaVersion: typeof LOCAL_SCHEMA_VERSION;
   workspaceId: string;
   board: Board;
+  appearance: BoardAppearanceSettings;
   columns: BoardColumn[];
   cards: Card[];
   checklistsByCardId: Record<string, Checklist[]>;
@@ -458,6 +460,7 @@ export function mergeBoardSnapshots(
   }));
   return {
     ...server,
+    appearance: server.appearance,
     cards: cards.map((card) => ({
       ...card,
       ...checklistCounts(checklistsByCardId[card.id] || []),

@@ -2,7 +2,7 @@
   "expo": {
     "name": "p2pKanban",
     "slug": "p2pkanban-mobile",
-    "version": "1.5.0-mobile.7",
+    "version": "1.5.0-mobile.8",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "p2pkanban",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "dev.p2pkanban.mobile",
-      "versionCode": 7,
+      "versionCode": 8,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -23,7 +23,9 @@
       },
       "permissions": [
         "android.permission.INTERNET",
-        "android.permission.ACCESS_NETWORK_STATE"
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.SCHEDULE_EXACT_ALARM"
       ],
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",
@@ -35,6 +37,7 @@
     },
     "plugins": [
       "expo-secure-store",
+      "expo-notifications",
       [
         "expo-build-properties",
         {
@@ -46,7 +49,7 @@
     ],
     "extra": {
       "appChannel": "mobile-mvp",
-      "clientVersion": "1.5.0-mobile.7",
+      "clientVersion": "1.5.0-mobile.8",
       "eas": {
         "projectId": "19e01039-73f2-4df3-ac5b-ebe8a587b807"
       }

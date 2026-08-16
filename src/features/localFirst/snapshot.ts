@@ -1,5 +1,6 @@
 import {
   getBoard,
+  getBoardAppearance,
   getCards,
   getChecklists,
   getColumns,
@@ -39,8 +40,9 @@ export async function fetchBoardSnapshot(
   boardId: string,
   workspaceId: string,
 ): Promise<LocalBoardSnapshot> {
-  const [board, columns, cards] = await Promise.all([
+  const [board, appearance, columns, cards] = await Promise.all([
     getBoard(boardId),
+    getBoardAppearance(boardId),
     getColumns(boardId),
     getCards(boardId),
   ]);
@@ -55,6 +57,7 @@ export async function fetchBoardSnapshot(
     schemaVersion: LOCAL_SCHEMA_VERSION,
     workspaceId,
     board,
+    appearance,
     columns: columns.items.sort((left, right) => left.position - right.position),
     cards: cards.items,
     checklistsByCardId,

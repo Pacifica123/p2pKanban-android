@@ -1,4 +1,5 @@
 import type { Card, Checklist, ChecklistItem } from '../../shared/types/api';
+import { defaultBoardAppearance } from '../appearance/boardTheme';
 import {
   LOCAL_SCHEMA_VERSION,
   type LocalBoardSnapshot,
@@ -351,6 +352,7 @@ export function applyRoamingEvents(
           snapshot = {
             ...candidate,
             schemaVersion: LOCAL_SCHEMA_VERSION,
+            appearance: candidate.appearance || defaultBoardAppearance(candidate.board.id),
             cards: visibleCards,
             checklistsByCardId: Object.fromEntries(
               visibleCards.map((card) => [card.id, candidate.checklistsByCardId?.[card.id] || []]),

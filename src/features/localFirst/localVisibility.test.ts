@@ -4,6 +4,7 @@ import {
   type LocallyHiddenCard,
 } from './localVisibility';
 import { LOCAL_SCHEMA_VERSION, type LocalBoardSnapshot } from './model';
+import { defaultBoardAppearance } from '../appearance/boardTheme';
 
 jest.mock('../../shared/storage/storage', () => ({
   readSessionJson: jest.fn(),
@@ -35,6 +36,7 @@ const snapshot: LocalBoardSnapshot = {
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
   },
+  appearance: defaultBoardAppearance(card.boardId),
   columns: [],
   cards: [card],
   checklistsByCardId: { [card.id]: [] },

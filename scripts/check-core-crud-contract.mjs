@@ -19,11 +19,11 @@ const packageJson = JSON.parse(read('package.json'));
 const packageLock = JSON.parse(read('package-lock.json'));
 const appJson = JSON.parse(read('app.json'));
 if (
-  packageJson.version !== '1.5.0-mobile.7'
+  packageJson.version !== '1.5.0-mobile.8'
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
-  || appJson.expo.version !== '1.5.0-mobile.7'
-  || appJson.expo.android.versionCode !== 7
+  || appJson.expo.version !== '1.5.0-mobile.8'
+  || appJson.expo.android.versionCode !== 8
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }
@@ -73,6 +73,8 @@ requireText('src/features/boards/BoardScreen.tsx', [
   'getAppendPosition',
   'runtime.moveCard',
   'runtime.locallyHiddenCards',
+  'BoardAppearanceModal',
+  'resolveBoardPalette',
 ]);
 requireText('src/features/cards/CardDetailsModal.tsx', [
   'runtime.createChecklist',
@@ -83,6 +85,29 @@ requireText('src/features/cards/CardDetailsModal.tsx', [
   'createComment',
   'runtime.hideCardLocally',
   'Удалить везде',
+  'scheduleCardReminder',
+  'cancelCardReminder',
+]);
+
+requireText('src/features/reminders/service.ts', [
+  'SchedulableTriggerInputTypes.DATE',
+  'timezoneOffset',
+  'reconcileCardReminders',
+  'cancelAllCardReminders',
+]);
+requireText('src/features/appearance/AppearanceProvider.tsx', [
+  'getMyAppearance',
+  'updateMyAppearance',
+  'PENDING_KEY',
+]);
+requireText('app.json', [
+  'android.permission.POST_NOTIFICATIONS',
+  'android.permission.SCHEDULE_EXACT_ALARM',
+  'expo-notifications',
+]);
+requireText('android/app/src/main/AndroidManifest.xml', [
+  'android.permission.POST_NOTIFICATIONS',
+  'android.permission.SCHEDULE_EXACT_ALARM',
 ]);
 
 requireText('src/features/roaming/merge.ts', [
@@ -94,11 +119,11 @@ requireText('src/features/localFirst/localVisibility.ts', [
   'reconcileHiddenCardsWithCoordinator',
 ]);
 requireText('src/features/sync/syncService.ts', [
-  "appVersion: '1.5.0-mobile.7'",
+  "appVersion: '1.5.0-mobile.8'",
 ]);
 requireText('android/app/build.gradle', [
-  'versionCode 7',
-  'versionName "1.5.0-mobile.7"',
+  'versionCode 8',
+  'versionName "1.5.0-mobile.8"',
 ]);
 
-console.log('OK: Android CRUD, scoped deletion, roaming deltas, versions and drag contract are aligned');
+console.log('OK: Android CRUD, reminders, appearance, roaming, versions and drag contract are aligned');

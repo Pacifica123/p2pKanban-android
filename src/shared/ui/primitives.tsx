@@ -1,6 +1,7 @@
 import type { PropsWithChildren, ReactNode } from 'react';
 import {
   ActivityIndicator,
+  ImageBackground,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -16,27 +17,54 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { radius, spacing, useAppColors } from '../../app/theme';
+import { useAppearance } from '../../features/appearance/AppearanceProvider';
 
 export function Screen({
   children,
   scroll = false,
   contentStyle,
-}: PropsWithChildren<{ scroll?: boolean; contentStyle?: ViewStyle }>) {
+  backgroundColor,
+  backgroundImage,
+}: PropsWithChildren<{
+  scroll?: boolean;
+  contentStyle?: ViewStyle;
+  backgroundColor?: string;
+  backgroundImage?: string | null;
+}>) {
   const colors = useAppColors();
+  const dense = useAppearance().preferences.density === 'compact';
   const content = scroll ? (
     <ScrollView
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={[styles.screenContent, contentStyle]}
+      contentContainerStyle={[styles.screenContent, dense && styles.screenContentDense, contentStyle]}
     >
       {children}
     </ScrollView>
   ) : (
-    <View style={[styles.screenContent, styles.screenContentFill, contentStyle]}>{children}</View>
+    <View style={[
+      styles.screenContent,
+      dense && styles.screenContentDense,
+      styles.screenContentFill,
+      contentStyle,
+    ]}>{children}</View>
   );
 
-  return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
+  const body = backgroundImage ? (
+    <ImageBackground
+      source={{ uri: backgroundImage }}
+      resizeMode="cover"
+      style={styles.backgroundImage}
+    >
       {content}
+    </ImageBackground>
+  ) : content;
+
+  return (
+    <SafeAreaView style={[
+      styles.safeArea,
+      { backgroundColor: backgroundColor || colors.background },
+    ]}>
+      {body}
     </SafeAreaView>
   );
 }
@@ -46,15 +74,19 @@ export function ScreenHeader({
   subtitle,
   onBack,
   action,
+  palette,
 }: {
   title: string;
   subtitle?: string;
   onBack?: () => void;
   action?: ReactNode;
+  palette?: { text: string; muted: string; border: string };
 }) {
   const colors = useAppColors();
+  const resolved = palette || colors;
+  const dense = useAppearance().preferences.density === 'compact';
   return (
-    <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View style={[styles.header, dense && styles.headerDense, { borderBottomColor: colors.border }]}>
       {onBack ? (
         <Pressable
           onPress={onBack}
@@ -62,18 +94,18 @@ export function ScreenHeader({
           accessibilityLabel="Назад"
           style={({ pressed }) => [
             styles.headerBack,
-            { borderColor: colors.border, opacity: pressed ? 0.65 : 1 },
+            { borderColor: resolved.border, opacity: pressed ? 0.65 : 1 },
           ]}
         >
-          <Text style={[styles.headerBackText, { color: colors.text }]}>‹</Text>
+          <Text style={[styles.headerBackText, { color: resolved.text }]}>‹</Text>
         </Pressable>
       ) : null}
       <View style={styles.headerTitle}>
-        <Text style={[styles.headerTitleText, { color: colors.text }]} numberOfLines={1}>
+        <Text style={[styles.headerTitleText, { color: resolved.text }]} numberOfLines={1}>
           {title}
         </Text>
         {subtitle ? (
-          <Text style={[styles.headerSubtitle, { color: colors.muted }]} numberOfLines={1}>
+          <Text style={[styles.headerSubtitle, { color: resolved.muted }]} numberOfLines={1}>
             {subtitle}
           </Text>
         ) : null}
@@ -93,6 +125,7 @@ export function Button({
   loading = false,
   compact = false,
   accessibilityLabel,
+  foregroundColor,
 }: {
   label: string;
   onPress: () => void;
@@ -101,8 +134,10 @@ export function Button({
   loading?: boolean;
   compact?: boolean;
   accessibilityLabel?: string;
+  foregroundColor?: string;
 }) {
   const colors = useAppColors();
+  const dense = useAppearance().preferences.density === 'compact';
   const palette = {
     primary: {
       background: colors.accent,
@@ -134,6 +169,7 @@ export function Button({
       accessibilityLabel={accessibilityLabel || label}
       style={({ pressed }) => [
         styles.button,
+        dense && styles.buttonDense,
         compact && styles.buttonCompact,
         {
           backgroundColor: palette.background,
@@ -143,7 +179,7 @@ export function Button({
       ]}
     >
       {loading ? <ActivityIndicator size="small" color={palette.text} /> : null}
-      <Text style={[styles.buttonText, { color: palette.text }]} numberOfLines={1}>
+      <Text style={[styles.buttonText, { color: foregroundColor || palette.text }]} numberOfLines={1}>
         {label}
       </Text>
     </Pressable>
@@ -157,6 +193,7 @@ export function Field({
   ...props
 }: TextInputProps & { label: string; hint?: string }) {
   const colors = useAppColors();
+  const dense = useAppearance().preferences.density === 'compact';
   return (
     <View style={styles.field}>
       <Text style={[styles.fieldLabel, { color: colors.text }]}>{label}</Text>
@@ -167,6 +204,7 @@ export function Field({
         selectionColor={colors.accent}
         style={[
           styles.input,
+          dense && styles.inputDense,
           multiline && styles.inputMultiline,
           {
             color: colors.text,
@@ -186,10 +224,12 @@ export function Panel({
   style,
 }: PropsWithChildren<{ style?: ViewStyle }>) {
   const colors = useAppColors();
+  const dense = useAppearance().preferences.density === 'compact';
   return (
     <View
       style={[
         styles.panel,
+        dense && styles.panelDense,
         { backgroundColor: colors.surface, borderColor: colors.border },
         style,
       ]}
@@ -252,8 +292,14 @@ export function FormModal({
   onClose,
 }: PropsWithChildren<{ visible: boolean; title: string; onClose: () => void }>) {
   const colors = useAppColors();
+  const { preferences } = useAppearance();
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal
+      visible={visible}
+      transparent
+      animationType={preferences.reduceMotion ? 'none' : 'fade'}
+      onRequestClose={onClose}
+    >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : spacing.sm}
@@ -268,7 +314,10 @@ export function FormModal({
           <ScrollView
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.modalBody}
+            contentContainerStyle={[
+              styles.modalBody,
+              preferences.density === 'compact' && styles.modalBodyDense,
+            ]}
           >
             {children}
           </ScrollView>
@@ -298,9 +347,16 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
+  backgroundImage: {
+    flex: 1,
+  },
   screenContent: {
     padding: spacing.md,
     gap: spacing.md,
+  },
+  screenContentDense: {
+    padding: spacing.sm,
+    gap: spacing.sm,
   },
   screenContentFill: {
     flex: 1,
@@ -312,6 +368,10 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
     paddingBottom: spacing.sm,
+  },
+  headerDense: {
+    minHeight: 48,
+    paddingBottom: spacing.xs,
   },
   headerBack: {
     width: 38,
@@ -355,6 +415,10 @@ const styles = StyleSheet.create({
     minHeight: 36,
     paddingHorizontal: spacing.sm,
   },
+  buttonDense: {
+    minHeight: 40,
+    paddingHorizontal: spacing.sm,
+  },
   buttonText: {
     fontSize: 15,
     fontWeight: '700',
@@ -378,6 +442,10 @@ const styles = StyleSheet.create({
     minHeight: 116,
     textAlignVertical: 'top',
   },
+  inputDense: {
+    minHeight: 42,
+    paddingVertical: spacing.xs,
+  },
   hint: {
     fontSize: 12,
     lineHeight: 17,
@@ -386,6 +454,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radius.md,
     padding: spacing.md,
+  },
+  panelDense: {
+    padding: spacing.sm,
   },
   state: {
     flex: 1,
@@ -440,6 +511,11 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     paddingBottom: spacing.xl,
     gap: spacing.md,
+  },
+  modalBodyDense: {
+    padding: spacing.sm,
+    paddingBottom: spacing.lg,
+    gap: spacing.sm,
   },
   sectionTitleRow: {
     flexDirection: 'row',

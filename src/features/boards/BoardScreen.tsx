@@ -1,5 +1,5 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   PanResponder,
@@ -13,13 +13,14 @@ import {
 
 import { useNetwork } from '../../app/NetworkProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
-import { radius, spacing, useAppColors } from '../../app/theme';
+import { radius, spacing, useAppColors, useResolvedTheme } from '../../app/theme';
 import {
   createColumn,
   deleteColumn,
+  updateBoardAppearance,
   updateColumn,
 } from '../../shared/api/endpoints';
-import type { BoardColumn, Card } from '../../shared/types/api';
+import type { BoardAppearanceSettings, BoardColumn, Card } from '../../shared/types/api';
 import { formatCountRu } from '../../shared/lib/russian';
 import {
   Button,
@@ -31,6 +32,12 @@ import {
   StateView,
 } from '../../shared/ui/primitives';
 import { CardDetailsModal } from '../cards/CardDetailsModal';
+import { BoardAppearanceModal } from '../appearance/BoardAppearanceModal';
+import {
+  defaultBoardAppearance,
+  resolveBoardPalette,
+  type BoardPalette,
+} from '../appearance/boardTheme';
 import { useLocalBoard } from '../localFirst/useLocalBoard';
 import {
   getAppendPosition,
@@ -95,8 +102,16 @@ function DragHandle({
   );
 }
 
+function formatCardDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' });
+}
+
 function CardPreview({
   card,
+  appearance,
+  palette,
   operationState,
   onPress,
   onDragStart,
@@ -105,6 +120,8 @@ function CardPreview({
   onDragCancel,
 }: {
   card: Card;
+  appearance: BoardAppearanceSettings;
+  palette: BoardPalette;
   operationState: 'pending' | 'failed' | null;
   onPress: () => void;
   onDragStart: (pageX: number, pageY: number) => void;
@@ -126,8 +143,8 @@ function CardPreview({
       style={[
         styles.card,
         {
-          backgroundColor: colors.surface,
-          borderColor: operationState === 'failed' ? colors.danger : colors.border,
+          backgroundColor: palette.card,
+          borderColor: operationState === 'failed' ? colors.danger : palette.border,
         },
       ]}
     >
@@ -136,7 +153,7 @@ function CardPreview({
           onPress={onPress}
           style={({ pressed }) => [styles.cardOpenArea, { opacity: pressed ? 0.68 : 1 }]}
         >
-          <Text style={[styles.cardTitle, { color: colors.text }]}>{card.title}</Text>
+          <Text style={[styles.cardTitle, { color: palette.text }]}>{card.title}</Text>
         </Pressable>
         <DragHandle
           onStart={onDragStart}
@@ -149,40 +166,56 @@ function CardPreview({
         onPress={onPress}
         style={({ pressed }) => [styles.cardBody, { opacity: pressed ? 0.68 : 1 }]}
       >
-        {card.description ? (
-          <Text style={[styles.cardDescription, { color: colors.muted }]} numberOfLines={3}>
+        {appearance.showCardDescription && card.description ? (
+          <Text
+            style={[styles.cardDescription, { color: palette.muted }]}
+            numberOfLines={appearance.cardPreviewMode === 'compact' ? 1 : 3}
+          >
             {card.description}
           </Text>
         ) : null}
-        {checklistItems ? (
+        {appearance.showChecklistProgress && checklistItems ? (
           <View style={styles.cardProgress}>
-            <View style={[styles.cardProgressTrack, { backgroundColor: colors.border }]}>
+            <View style={[styles.cardProgressTrack, { backgroundColor: palette.border }]}>
               <View
                 style={[
                   styles.cardProgressFill,
                   {
-                    backgroundColor: checklistProgress === 1 ? colors.success : colors.accent,
+                    backgroundColor: checklistProgress === 1 ? colors.success : palette.accent,
                     width: `${Math.round(checklistProgress * 100)}%`,
                   },
                 ]}
               />
             </View>
-            <Text style={[styles.cardProgressText, { color: colors.muted }]}>
+            <Text style={[styles.cardProgressText, { color: palette.muted }]}>
               {completedChecklistItems}/{checklistItems}
             </Text>
           </View>
         ) : null}
         <View style={styles.cardMeta}>
+          {appearance.showCardDates && card.startAt ? (
+            <Text style={[styles.metaText, { color: palette.muted }]}>
+              с {formatCardDate(card.startAt)}
+            </Text>
+          ) : null}
+          {appearance.showCardDates && card.dueAt ? (
+            <Text style={[styles.metaText, { color: palette.muted }]}>
+              до {formatCardDate(card.dueAt)}
+            </Text>
+          ) : null}
           {card.isArchived ? (
             <Text style={[styles.metaText, { color: colors.warning }]}>В архиве</Text>
           ) : null}
           {card.status ? (
-            <Text style={[styles.metaText, { color: colors.muted }]}>
+            <Text style={[styles.metaText, { color: palette.muted }]}>
               {statusLabels[card.status] || card.status}
             </Text>
           ) : null}
           {card.priority ? (
-            <Text style={[styles.metaText, { color: card.priority === 'urgent' ? colors.danger : colors.muted }]}>
+            <Text style={[
+              styles.metaText,
+              { color: card.priority === 'urgent' ? colors.danger : palette.muted },
+            ]}>
               {priorityLabels[card.priority] || card.priority}
             </Text>
           ) : null}
@@ -200,6 +233,7 @@ function CardPreview({
 export function BoardScreen({ navigation, route }: Props) {
   const { workspaceId, boardId, boardName } = route.params;
   const colors = useAppColors();
+  const resolvedTheme = useResolvedTheme();
   const { width, height } = useWindowDimensions();
   const { isOnline } = useNetwork();
   const runtime = useLocalBoard(boardId, workspaceId);
@@ -225,9 +259,17 @@ export function BoardScreen({ navigation, route }: Props) {
   const [formError, setFormError] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [showLocallyHidden, setShowLocallyHidden] = useState(false);
+  const [appearanceModal, setAppearanceModal] = useState(false);
+  const [appearanceBusy, setAppearanceBusy] = useState(false);
+  const [appearanceError, setAppearanceError] = useState<string | null>(null);
   const [dragState, setDragState] = useState<typeof dragRef.current>(null);
 
   const snapshot = runtime.snapshot;
+  const appearance = snapshot?.appearance || defaultBoardAppearance(boardId);
+  const boardPalette = useMemo(
+    () => resolveBoardPalette(appearance, resolvedTheme),
+    [appearance, resolvedTheme],
+  );
   const columns = useMemo(
     () => [...(snapshot?.columns || [])].sort((left, right) => left.position - right.position),
     [snapshot?.columns],
@@ -238,8 +280,34 @@ export function BoardScreen({ navigation, route }: Props) {
   );
   const selectedCard = (snapshot?.cards || [])
     .find((card) => card.id === selectedCardId) || null;
-  const columnWidth = Math.min(Math.max(width - 48, 282), 370);
+  const columnWidth = appearance.columnDensity === 'compact'
+    ? Math.min(Math.max(width - 68, 258), 310)
+    : Math.min(Math.max(width - 48, 282), 370);
   const columnStride = columnWidth + spacing.sm;
+
+  useEffect(() => {
+    const focusCardId = route.params.focusCardId;
+    if (!focusCardId || !snapshot?.cards.some((card) => card.id === focusCardId)) return;
+    setSelectedCardId(focusCardId);
+    navigation.setParams({ focusCardId: undefined });
+  }, [navigation, route.params.focusCardId, snapshot?.cards]);
+
+  async function saveAppearance(input: Parameters<typeof updateBoardAppearance>[1]) {
+    if (appearanceBusy) return;
+    setAppearanceBusy(true);
+    setAppearanceError(null);
+    try {
+      await updateBoardAppearance(boardId, input);
+      await runtime.refresh();
+      setAppearanceModal(false);
+    } catch (error) {
+      setAppearanceError(error instanceof Error
+        ? error.message
+        : 'Не удалось сохранить оформление доски.');
+    } finally {
+      setAppearanceBusy(false);
+    }
+  }
 
   async function submitCard() {
     if (!createCardColumnId || !newCardTitle.trim() || formBusy) return;
@@ -473,59 +541,82 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   return (
-    <Screen contentStyle={styles.screen}>
-      <ScreenHeader
-        title={snapshot.board.name}
-        subtitle={`${formatCountRu(columns.length, 'колонка', 'колонки', 'колонок')} · ${formatCountRu(displayedCards.length, 'карточка', 'карточки', 'карточек')}`}
-        onBack={() => navigation.goBack()}
-        action={(
+    <Screen
+      contentStyle={styles.screen}
+      backgroundColor={boardPalette.background}
+      backgroundImage={boardPalette.imageUri}
+    >
+      <View style={[
+        styles.boardChrome,
+        { backgroundColor: boardPalette.column, borderColor: boardPalette.border },
+      ]}>
+        <ScreenHeader
+          title={snapshot.board.name}
+          subtitle={`${formatCountRu(columns.length, 'колонка', 'колонки', 'колонок')} · ${formatCountRu(displayedCards.length, 'карточка', 'карточки', 'карточек')}`}
+          onBack={() => navigation.goBack()}
+          palette={boardPalette}
+          action={(
+            <Button
+              label="История"
+              compact
+              variant="ghost"
+              foregroundColor={boardPalette.muted}
+              onPress={() => navigation.navigate('Activity', {
+                boardId,
+                boardName: snapshot.board.name,
+              })}
+            />
+          )}
+        />
+
+        <View style={styles.statusRow}>
+          <View style={styles.statusNotice}>
+            <InlineNotice text={syncText} tone={syncTone} />
+          </View>
+          {runtime.failedCount ? (
+            <Button label="Повторить" compact onPress={() => void runtime.retryFailed()} />
+          ) : (
+            <Button
+              label="Обновить"
+              compact
+              loading={runtime.refreshing}
+              disabled={!isOnline}
+              onPress={() => void runtime.refresh()}
+            />
+          )}
+        </View>
+
+        <View style={styles.boardTools}>
+          <Text style={[styles.dragHint, { color: boardPalette.muted }]}>
+            Тяните карточку за ≡ к краю экрана, чтобы перейти в соседнюю колонку.
+          </Text>
           <Button
-            label="История"
+            label="Оформление"
             compact
             variant="ghost"
-            onPress={() => navigation.navigate('Activity', {
-              boardId,
-              boardName: snapshot.board.name,
-            })}
+            foregroundColor={boardPalette.muted}
+            onPress={() => {
+              setAppearanceError(null);
+              setAppearanceModal(true);
+            }}
           />
-        )}
-      />
-
-      <View style={styles.statusRow}>
-        <View style={styles.statusNotice}>
-          <InlineNotice text={syncText} tone={syncTone} />
-        </View>
-        {runtime.failedCount ? (
-          <Button label="Повторить" compact onPress={() => void runtime.retryFailed()} />
-        ) : (
           <Button
-            label="Обновить"
+            label={showArchived ? 'Скрыть архив' : 'Показать архив'}
             compact
-            loading={runtime.refreshing}
-            disabled={!isOnline}
-            onPress={() => void runtime.refresh()}
+            variant="ghost"
+            foregroundColor={boardPalette.muted}
+            onPress={() => setShowArchived((current) => !current)}
           />
-        )}
-      </View>
-
-      <View style={styles.boardTools}>
-        <Text style={[styles.dragHint, { color: colors.muted }]}>
-          Тяните карточку за ≡ к краю экрана, чтобы перейти в соседнюю колонку.
-        </Text>
-        <Button
-          label={showArchived ? 'Скрыть архив' : 'Показать архив'}
-          compact
-          variant="ghost"
-          onPress={() => setShowArchived((current) => !current)}
-        />
-        <Button
-          label={`Скрытые здесь${runtime.locallyHiddenCards.length
-            ? ` (${runtime.locallyHiddenCards.length})`
-            : ''}`}
-          compact
-          variant="ghost"
-          onPress={() => setShowLocallyHidden(true)}
-        />
+          <Button
+            label={`Скрытые здесь${runtime.locallyHiddenCards.length
+              ? ` (${runtime.locallyHiddenCards.length})`
+              : ''}`}
+            compact
+            variant="ghost"
+            foregroundColor={boardPalette.muted}
+            onPress={() => setShowLocallyHidden(true)}
+          />
+        </View>
       </View>
 
       {runtime.lastError && !runtime.failedCount ? (
@@ -567,17 +658,17 @@ export function BoardScreen({ navigation, route }: Props) {
                   styles.column,
                   {
                     width: columnWidth,
-                    backgroundColor: colors.surfaceMuted,
-                    borderColor: isDropTarget ? colors.accent : colors.border,
+                    backgroundColor: boardPalette.column,
+                    borderColor: isDropTarget ? boardPalette.accent : boardPalette.border,
                     borderWidth: isDropTarget ? 2 : 1,
                   },
                 ]}
               >
                 <View style={styles.columnHeader}>
-                  <Text style={[styles.columnTitle, { color: colors.text }]} numberOfLines={1}>
+                  <Text style={[styles.columnTitle, { color: boardPalette.text }]} numberOfLines={1}>
                     {column.name}
                   </Text>
-                  <Text style={[styles.columnCount, { color: colors.muted }]}>{cards.length}</Text>
+                  <Text style={[styles.columnCount, { color: boardPalette.muted }]}>{cards.length}</Text>
                   <Pressable
                     onPress={() => openColumnActions(column)}
                     accessibilityRole="button"
@@ -585,12 +676,12 @@ export function BoardScreen({ navigation, route }: Props) {
                     style={({ pressed }) => [
                       styles.columnMenu,
                       {
-                        backgroundColor: colors.surface,
+                        backgroundColor: boardPalette.card,
                         opacity: pressed ? 0.65 : 1,
                       },
                     ]}
                   >
-                    <Text style={[styles.columnMenuText, { color: colors.muted }]}>•••</Text>
+                    <Text style={[styles.columnMenuText, { color: boardPalette.muted }]}>•••</Text>
                   </Pressable>
                 </View>
                 <Button
@@ -612,6 +703,8 @@ export function BoardScreen({ navigation, route }: Props) {
                     <CardPreview
                       key={card.id}
                       card={card}
+                      appearance={appearance}
+                      palette={boardPalette}
                       operationState={runtime.cardOperationState(card.id)}
                       onPress={() => setSelectedCardId(card.id)}
                       onDragStart={(pageX, pageY) => startDrag(card, pageX, pageY)}
@@ -621,7 +714,7 @@ export function BoardScreen({ navigation, route }: Props) {
                     />
                   ))}
                   {!cards.length ? (
-                    <Text style={[styles.emptyColumn, { color: colors.muted }]}>
+                    <Text style={[styles.emptyColumn, { color: boardPalette.muted }]}>
                       Карточек пока нет
                     </Text>
                   ) : null}
@@ -633,11 +726,15 @@ export function BoardScreen({ navigation, route }: Props) {
           <View
             style={[
               styles.addColumn,
-              { width: columnWidth, borderColor: colors.border },
+              {
+                width: columnWidth,
+                borderColor: boardPalette.border,
+                backgroundColor: boardPalette.column,
+              },
             ]}
           >
-            <Text style={[styles.addColumnTitle, { color: colors.text }]}>Следующая колонка</Text>
-            <Text style={[styles.addColumnText, { color: colors.muted }]}>
+            <Text style={[styles.addColumnTitle, { color: boardPalette.text }]}>Следующая колонка</Text>
+            <Text style={[styles.addColumnText, { color: boardPalette.muted }]}>
               В этой версии колонки создаются через локальный узел; карточки уже
               синхронизируются независимо через зашифрованный журнал.
             </Text>
@@ -743,6 +840,18 @@ export function BoardScreen({ navigation, route }: Props) {
         />
       </FormModal>
 
+      <BoardAppearanceModal
+        visible={appearanceModal}
+        appearance={appearance}
+        online={isOnline}
+        saving={appearanceBusy}
+        error={appearanceError}
+        onClose={() => {
+          if (!appearanceBusy) setAppearanceModal(false);
+        }}
+        onSave={saveAppearance}
+      />
+
       <CardDetailsModal
         card={selectedCard}
         columns={columns}
@@ -780,6 +889,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
+  },
+  boardChrome: {
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderRadius: radius.md,
   },
   statusNotice: {
     flex: 1,

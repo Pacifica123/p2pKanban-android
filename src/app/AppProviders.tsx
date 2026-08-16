@@ -4,7 +4,9 @@ import { useState } from 'react';
 import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '../features/auth/AuthProvider';
+import { AppearanceProvider } from '../features/appearance/AppearanceProvider';
 import { ConnectionProvider } from '../features/connection/ConnectionProvider';
+import { ReminderProvider } from '../features/reminders/ReminderProvider';
 import { NetworkProvider } from './NetworkProvider';
 
 export function AppProviders({ children }: PropsWithChildren) {
@@ -26,7 +28,11 @@ export function AppProviders({ children }: PropsWithChildren) {
       <QueryClientProvider client={queryClient}>
         <ConnectionProvider>
           <NetworkProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider>
+              <AppearanceProvider>
+                <ReminderProvider>{children}</ReminderProvider>
+              </AppearanceProvider>
+            </AuthProvider>
           </NetworkProvider>
         </ConnectionProvider>
       </QueryClientProvider>

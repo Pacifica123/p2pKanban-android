@@ -2,6 +2,7 @@ import type { Card } from '../../shared/types/api';
 import { LOCAL_SCHEMA_VERSION, type LocalBoardSnapshot } from '../localFirst/model';
 import { applyRoamingEvents, EMPTY_ROAMING_APPLY_STATE } from './merge';
 import { ROAMING_PROTOCOL_VERSION, type RoamingBoardEvent } from './types';
+import { defaultBoardAppearance } from '../appearance/boardTheme';
 
 const workspaceId = '018f22e2-355a-7ba2-8ef0-d7bc788ceec8';
 const boardId = '018f22e2-355a-7ba2-8ef0-d7bc788ceec9';
@@ -35,6 +36,7 @@ function snapshot(): LocalBoardSnapshot {
       createdAt: '2026-07-28T10:00:00.000Z',
       updatedAt: '2026-07-28T10:00:00.000Z',
     },
+    appearance: defaultBoardAppearance(boardId),
     columns: [],
     cards: [card('исходная')],
     checklistsByCardId: {},

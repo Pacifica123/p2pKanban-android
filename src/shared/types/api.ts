@@ -242,3 +242,59 @@ export interface BackendVersionResponse {
   version: string;
   env: string;
 }
+
+export type AppTheme = 'system' | 'light' | 'dark';
+export type Density = 'comfortable' | 'compact';
+export type ChecklistItemSubmitMode = 'ctrl_enter' | 'enter' | 'button';
+export type CardDetailsMode = 'drawer' | 'modal';
+export type WallpaperKind = 'none' | 'accent' | 'solid' | 'gradient' | 'preset' | 'image';
+export type CardPreviewMode = 'compact' | 'expanded';
+
+export interface WallpaperConfig {
+  kind: WallpaperKind;
+  value?: string | null;
+}
+
+export interface UserAppearancePreferences {
+  userId: string;
+  isCustomized: boolean;
+  appTheme: AppTheme;
+  density: Density;
+  reduceMotion: boolean;
+  checklistItemSubmitMode: ChecklistItemSubmitMode;
+  cardDetailsMode: CardDetailsMode;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type UpdateUserAppearancePreferencesRequest = Partial<Pick<
+  UserAppearancePreferences,
+  'appTheme' | 'density' | 'reduceMotion' | 'checklistItemSubmitMode' | 'cardDetailsMode'
+>>;
+
+export interface BoardAppearanceSettings {
+  boardId: string;
+  isCustomized: boolean;
+  themePreset: string;
+  wallpaper: WallpaperConfig;
+  columnDensity: Density;
+  cardPreviewMode: CardPreviewMode;
+  showCardDescription: boolean;
+  showCardDates: boolean;
+  showChecklistProgress: boolean;
+  customProperties: Record<string, unknown>;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type UpdateBoardAppearanceRequest = Partial<Pick<
+  BoardAppearanceSettings,
+  | 'themePreset'
+  | 'wallpaper'
+  | 'columnDensity'
+  | 'cardPreviewMode'
+  | 'showCardDescription'
+  | 'showCardDates'
+  | 'showChecklistProgress'
+  | 'customProperties'
+>>;

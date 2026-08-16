@@ -66,6 +66,7 @@ import {
   persistServerSnapshot,
 } from './repository';
 import { fetchBoardSnapshot } from './snapshot';
+import { moveCardReminder } from '../reminders/service';
 
 export interface LocalBoardRuntime {
   snapshot: LocalBoardSnapshot | null;
@@ -386,6 +387,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
               );
               nextSnapshot = replaced.snapshot;
               nextOperations = replaced.operations;
+              await moveCardReminder(current.entityId, created.id, created.title);
               relayOperation = {
                 ...current,
                 entityId: created.id,

@@ -5,6 +5,7 @@ import type {
   BoardLabel,
   BoardLabelListResponse,
   BoardListResponse,
+  BoardAppearanceSettings,
   BackendVersionResponse,
   Card,
   CardListResponse,
@@ -19,6 +20,9 @@ import type {
   RoamingCapabilityResponse,
   SessionResponse,
   SyncStatusResponse,
+  UpdateBoardAppearanceRequest,
+  UpdateUserAppearancePreferencesRequest,
+  UserAppearancePreferences,
   Workspace,
   WorkspaceListResponse,
 } from '../types/api';
@@ -26,6 +30,40 @@ import { apiRequest } from './client';
 
 export function getBackendVersion() {
   return apiRequest<BackendVersionResponse>('/health', {}, { skipRefresh: true });
+}
+
+function normalizeUserAppearance(value: UserAppearancePreferences): UserAppearancePreferences {
+  return {
+    ...value,
+    checklistItemSubmitMode: value.checklistItemSubmitMode || 'ctrl_enter',
+    cardDetailsMode: value.cardDetailsMode || 'drawer',
+  };
+}
+
+export async function getMyAppearance() {
+  return normalizeUserAppearance(
+    await apiRequest<UserAppearancePreferences>('/me/appearance'),
+  );
+}
+
+export async function updateMyAppearance(input: UpdateUserAppearancePreferencesRequest) {
+  return normalizeUserAppearance(
+    await apiRequest<UserAppearancePreferences>('/me/appearance', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export function getBoardAppearance(boardId: string) {
+  return apiRequest<BoardAppearanceSettings>(`/boards/${boardId}/appearance`);
+}
+
+export function updateBoardAppearance(boardId: string, input: UpdateBoardAppearanceRequest) {
+  return apiRequest<BoardAppearanceSettings>(`/boards/${boardId}/appearance`, {
+    method: 'PUT',
+    body: JSON.stringify(input),
+  });
 }
 
 export function nativeSignIn(input: { email: string; password: string }) {
