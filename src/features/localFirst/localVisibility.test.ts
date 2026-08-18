@@ -16,7 +16,6 @@ const card: Card = {
   boardId: 'board-one',
   columnId: 'column-one',
   title: 'Локальная страховочная копия',
-  status: 'active',
   priority: null,
   position: 1000,
   isArchived: false,

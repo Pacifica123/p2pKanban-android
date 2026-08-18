@@ -8,7 +8,6 @@ import type {
   BoardLabel,
   Card,
   CardPriority,
-  CardStatus,
   Comment,
 } from '../../shared/types/api';
 import {
@@ -41,49 +40,60 @@ import {
   updateCardReminderTitle,
 } from '../reminders/service';
 
-const statuses: Array<{ value: CardStatus; label: string }> = [
-  { value: 'active', label: 'Активно' },
-  { value: 'completed', label: 'Завершено' },
-  { value: 'cancelled', label: 'Отменено' },
+const priorityLevels: Array<Exclude<CardPriority, null>> = [
+  'low', 'medium', 'high', 'urgent',
 ];
 
-const priorities: Array<{ value: CardPriority; label: string }> = [
-  { value: null, label: 'Без приоритета' },
-  { value: 'low', label: 'Низкий' },
-  { value: 'medium', label: 'Средний' },
-  { value: 'high', label: 'Высокий' },
-  { value: 'urgent', label: 'Срочно' },
-];
+const priorityLabels: Record<Exclude<CardPriority, null>, string> = {
+  low: 'Низкий',
+  medium: 'Средний',
+  high: 'Высокий',
+  urgent: 'Срочно',
+};
 
-function Choice<T extends string | null>({
+function PriorityStars({
   value,
-  selected,
-  label,
-  onPress,
+  onChange,
 }: {
-  value: T;
-  selected: T;
-  label: string;
-  onPress: (value: T) => void;
+  value: CardPriority;
+  onChange: (value: CardPriority) => void;
 }) {
   const colors = useAppColors();
-  const active = value === selected;
+  const selectedIndex = value ? priorityLevels.indexOf(value) : -1;
+  const activeColor = value === 'urgent'
+    ? colors.danger
+    : value === 'high'
+      ? colors.warning
+      : value === 'medium'
+        ? colors.accent
+        : colors.muted;
   return (
-    <Pressable
-      onPress={() => onPress(value)}
-      style={({ pressed }) => [
-        styles.choice,
-        {
-          backgroundColor: active ? colors.accentSoft : colors.surface,
-          borderColor: active ? colors.accent : colors.border,
-          opacity: pressed ? 0.7 : 1,
-        },
-      ]}
-    >
-      <Text style={[styles.choiceText, { color: active ? colors.accent : colors.text }]}>
-        {label}
+    <View style={styles.priorityLine} accessibilityRole="radiogroup">
+      <Text style={[styles.priorityLabel, { color: colors.text }]}>Приоритет</Text>
+      <View style={styles.stars}>
+        {priorityLevels.map((level, index) => (
+          <Pressable
+            key={level}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: value === level }}
+            accessibilityLabel={`${priorityLabels[level]}, ${index + 1} из 4`}
+            onPress={() => onChange(value === level ? null : level)}
+            hitSlop={4}
+            style={({ pressed }) => [styles.starHit, { opacity: pressed ? 0.5 : 1 }]}
+          >
+            <Text style={[
+              styles.star,
+              { color: index <= selectedIndex ? activeColor : colors.muted },
+            ]}>
+              {index <= selectedIndex ? '★' : '☆'}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={[styles.priorityValue, { color: colors.muted }]} numberOfLines={1}>
+        {value ? priorityLabels[value] : 'Без приоритета'}
       </Text>
-    </Pressable>
+    </View>
   );
 }
 
@@ -103,7 +113,6 @@ function SmallAction({
       style={({ pressed }) => [
         styles.smallAction,
         {
-          backgroundColor: danger ? colors.dangerSoft : colors.surfaceMuted,
           opacity: pressed ? 0.65 : 1,
         },
       ]}
@@ -129,9 +138,7 @@ export function CardDetailsModal({
   const colors = useAppColors();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<CardStatus>('active');
   const [priority, setPriority] = useState<CardPriority>(null);
-  const [columnId, setColumnId] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newChecklistTitle, setNewChecklistTitle] = useState('');
@@ -159,6 +166,8 @@ export function CardDetailsModal({
   const [reminderTime, setReminderTime] = useState('');
   const [hasReminder, setHasReminder] = useState(false);
   const checklists = card ? runtime.getCardChecklists(card.id) : [];
+  const columnName = columns.find((column) => column.id === card?.columnId)?.name
+    || 'Колонка недоступна';
 
   const loadCoordinatorExtras = useCallback(async (currentCard: Card) => {
     setExtrasLoading(true);
@@ -182,9 +191,7 @@ export function CardDetailsModal({
     let active = true;
     setTitle(card.title);
     setDescription(card.description || '');
-    setStatus(card.status || 'active');
     setPriority(card.priority);
-    setColumnId(card.columnId);
     setError(null);
     setEditingChecklist(null);
     setEditingItem(null);
@@ -222,13 +229,9 @@ export function CardDetailsModal({
       await runtime.updateCard(card.id, {
         title: title.trim(),
         description: description.trim() || null,
-        status,
         priority,
       });
       await updateCardReminderTitle(card.id, title.trim());
-      if (columnId && columnId !== card.columnId) {
-        await runtime.moveCard(card.id, columnId);
-      }
       onClose();
     });
   }
@@ -529,15 +532,24 @@ export function CardDetailsModal({
         placeholder="Что нужно сделать"
       />
 
+      <View style={styles.cardMetaBlock}>
+        <View style={styles.columnIndicator}>
+          <Text style={[styles.metaLabel, { color: colors.muted }]}>Колонка</Text>
+          <Text style={[styles.columnName, { color: colors.text }]} numberOfLines={1}>
+            {columnName}
+          </Text>
+        </View>
+        <PriorityStars value={priority} onChange={setPriority} />
+      </View>
+
       <View style={styles.section}>
         <SectionTitle
           title="Напоминание"
           detail={hasReminder ? 'включено' : 'выключено'}
         />
-        <InlineNotice
-          text="Только на этом устройстве и по его локальным дате и времени. На другие узлы и в relay настройка не отправляется."
-          tone="neutral"
-        />
+        <Text style={[styles.sectionCaption, { color: colors.muted }]}>
+          Только на этом устройстве, по его локальным дате и времени.
+        </Text>
         <View style={styles.reminderFields}>
           <View style={styles.reminderField}>
             <Field
@@ -583,16 +595,18 @@ export function CardDetailsModal({
       </View>
 
       <View style={styles.section}>
-        <SectionTitle
-          title="Чек-листы"
-          detail={`${checklists.reduce((sum, checklist) => sum + checklist.items.filter((item) => item.isDone).length, 0)}/${checklists.reduce((sum, checklist) => sum + checklist.items.length, 0)}`}
-        />
+        <View style={styles.checklistSectionHeader}>
+          <Text style={[styles.sectionEyebrow, { color: colors.muted }]}>Чек-листы</Text>
+          <Text style={[styles.sectionCount, { color: colors.muted }]}>
+            {checklists.reduce((sum, checklist) => sum + checklist.items.filter((item) => item.isDone).length, 0)}/{checklists.reduce((sum, checklist) => sum + checklist.items.length, 0)}
+          </Text>
+        </View>
         {checklists.map((checklist) => (
           <View
             key={checklist.id}
             style={[
               styles.checklist,
-              { backgroundColor: colors.surface, borderColor: colors.border },
+              { borderColor: colors.border },
             ]}
           >
             {editingChecklist?.id === checklist.id ? (
@@ -613,14 +627,14 @@ export function CardDetailsModal({
                   {checklist.title}
                 </Text>
                 <SmallAction
-                  label="Изм."
+                  label="✎"
                   onPress={() => setEditingChecklist({
                     id: checklist.id,
                     title: checklist.title,
                   })}
                 />
                 <SmallAction
-                  label="Удал."
+                  label="×"
                   danger
                   onPress={() => confirmDeleteChecklist(checklist.id, checklist.title)}
                 />
@@ -677,7 +691,7 @@ export function CardDetailsModal({
                     </Text>
                   </Pressable>
                   <SmallAction
-                    label="Изм."
+                    label="✎"
                     onPress={() => setEditingItem({
                       checklistId: checklist.id,
                       id: item.id,
@@ -735,63 +749,6 @@ export function CardDetailsModal({
             disabled={!newChecklistTitle.trim()}
             onPress={() => void createChecklist()}
           />
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <SectionTitle title="Статус" />
-        <View style={styles.choices}>
-          {statuses.map((item) => (
-            <Choice
-              key={item.value || 'none'}
-              value={item.value}
-              selected={status}
-              label={item.label}
-              onPress={setStatus}
-            />
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <SectionTitle title="Приоритет" />
-        <View style={styles.choices}>
-          {priorities.map((item) => (
-            <Choice
-              key={item.value || 'none'}
-              value={item.value}
-              selected={priority}
-              label={item.label}
-              onPress={setPriority}
-            />
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <SectionTitle title="Колонка" />
-        <View style={styles.columnChoices}>
-          {columns.map((column) => {
-            const active = column.id === columnId;
-            return (
-              <Pressable
-                key={column.id}
-                onPress={() => setColumnId(column.id)}
-                style={({ pressed }) => [
-                  styles.columnChoice,
-                  {
-                    backgroundColor: active ? colors.accentSoft : colors.surface,
-                    borderColor: active ? colors.accent : colors.border,
-                    opacity: pressed ? 0.7 : 1,
-                  },
-                ]}
-              >
-                <Text style={[styles.columnChoiceText, { color: colors.text }]}>
-                  {column.name}
-                </Text>
-              </Pressable>
-            );
-          })}
         </View>
       </View>
 
@@ -892,7 +849,7 @@ export function CardDetailsModal({
               key={comment.id}
               style={[
                 styles.comment,
-                { backgroundColor: colors.surface, borderColor: colors.border },
+                { borderColor: colors.border },
               ]}
             >
               <Text style={[styles.commentBody, { color: colors.text }]}>{comment.body}</Text>
@@ -943,6 +900,61 @@ const styles = StyleSheet.create({
   section: {
     gap: spacing.sm,
   },
+  sectionCaption: {
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  cardMetaBlock: {
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  columnIndicator: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  metaLabel: {
+    width: 72,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  columnName: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  priorityLine: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  priorityLabel: {
+    width: 72,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  stars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  starHit: {
+    width: 30,
+    minHeight: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  star: {
+    fontSize: 24,
+    lineHeight: 28,
+  },
+  priorityValue: {
+    flex: 1,
+    minWidth: 0,
+    marginLeft: spacing.xs,
+    fontSize: 11,
+    textAlign: 'right',
+  },
   reminderFields: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -953,41 +965,25 @@ const styles = StyleSheet.create({
   reminderTimeField: {
     flex: 1,
   },
-  choices: {
+  checklistSectionHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  choice: {
-    minHeight: 38,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.sm,
+  sectionEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
   },
-  choiceText: {
-    fontSize: 13,
+  sectionCount: {
+    fontSize: 11,
     fontWeight: '700',
-  },
-  columnChoices: {
-    gap: spacing.xs,
-  },
-  columnChoice: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-  },
-  columnChoiceText: {
-    fontSize: 14,
-    fontWeight: '600',
   },
   checklist: {
     gap: spacing.sm,
-    padding: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   entityHeader: {
     flexDirection: 'row',
@@ -996,7 +992,8 @@ const styles = StyleSheet.create({
   },
   checklistTitle: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: '800',
   },
   checklistItemRow: {
@@ -1049,15 +1046,14 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   smallAction: {
-    minHeight: 30,
-    minWidth: 38,
+    minHeight: 32,
+    minWidth: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.xs,
+    paddingHorizontal: 4,
   },
   smallActionText: {
-    fontSize: 11,
+    fontSize: 17,
     fontWeight: '800',
   },
   labelRow: {
@@ -1090,9 +1086,8 @@ const styles = StyleSheet.create({
   },
   comment: {
     gap: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radius.sm,
-    padding: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: spacing.sm,
   },
   commentBody: {
     fontSize: 14,

@@ -17,17 +17,16 @@ const CARD_FIELDS: Array<keyof Card> = [
   'parentCardId',
   'title',
   'description',
-  'status',
   'priority',
   'position',
   'startAt',
   'dueAt',
-  'completedAt',
   'isArchived',
   'archivedAt',
   'updatedAt',
 ];
 const CHECKLISTS_FIELD = 'checklists';
+const BOARD_APPEARANCE_FIELD = 'board.appearance';
 
 export const EMPTY_ROAMING_APPLY_STATE: RoamingApplyState = {
   seenEventIds: [],
@@ -40,6 +39,13 @@ export const EMPTY_ROAMING_APPLY_STATE: RoamingApplyState = {
 
 function fieldKey(entityId: string, field: string) {
   return `${entityId}:${field}`;
+}
+
+function stripRemovedCardState(
+  value: Card & { status?: unknown; completedAt?: unknown },
+): Card {
+  const { status: _status, completedAt: _completedAt, ...card } = value;
+  return card;
 }
 
 function eventWins(
@@ -85,6 +91,10 @@ function withChecklistCounts(snapshot: LocalBoardSnapshot, cardId: string, times
         updatedAt: timestamp,
       }
       : card),
+    checklistsHydratedAt: [snapshot.checklistsHydratedAt, timestamp]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) || timestamp,
     cachedAt: timestamp,
   };
 }
@@ -340,15 +350,41 @@ export function applyRoamingEvents(
       continue;
     }
 
-    if (event.operation === 'board.snapshot') {
+    if (event.operation === 'board.appearance.put') {
+      const incoming = event.payload.appearance as LocalBoardSnapshot['appearance'] | undefined;
+      const stamp = stampOf(event);
       if (!snapshot) {
-        const candidate = event.payload.snapshot as LocalBoardSnapshot | undefined;
-        if (
-          candidate
-          && candidate.workspaceId === event.workspaceId
-          && candidate.board.id === event.boardId
-        ) {
-          const visibleCards = candidate.cards.filter((card) => !tombstones[card.id]);
+        seen.delete(event.eventId);
+        continue;
+      }
+      if (
+        incoming?.boardId === snapshot.board.id
+        && event.entityId === snapshot.board.id
+        && eventWins(versions, snapshot.board.id, BOARD_APPEARANCE_FIELD, stamp)
+      ) {
+        versions[fieldKey(snapshot.board.id, BOARD_APPEARANCE_FIELD)] = stamp;
+        if (JSON.stringify(snapshot.appearance) !== JSON.stringify(incoming)) {
+          snapshot = { ...snapshot, appearance: incoming, cachedAt: event.occurredAt };
+          applied += 1;
+        }
+      }
+      continue;
+    }
+
+    if (event.operation === 'board.snapshot') {
+      const candidate = event.payload.snapshot as LocalBoardSnapshot | undefined;
+      if (
+        candidate
+        && candidate.workspaceId === event.workspaceId
+        && candidate.board.id === event.boardId
+      ) {
+        const stamp = stampOf(event);
+        if (!snapshot) {
+          const visibleCards = candidate.cards
+            .filter((card) => !tombstones[card.id])
+            .map((card) => stripRemovedCardState(
+              card as Card & { status?: unknown; completedAt?: unknown },
+            ));
           snapshot = {
             ...candidate,
             schemaVersion: LOCAL_SCHEMA_VERSION,
@@ -359,12 +395,25 @@ export function applyRoamingEvents(
             ),
             checklistsHydratedAt: candidate.checklistsHydratedAt || null,
           };
-          const stamp = stampOf(event);
           for (const card of snapshot.cards) {
             for (const field of CARD_FIELDS) versions[fieldKey(card.id, field)] = stamp;
             versions[fieldKey(card.id, CHECKLISTS_FIELD)] = stamp;
           }
+          versions[fieldKey(snapshot.board.id, BOARD_APPEARANCE_FIELD)] = stamp;
           applied += 1;
+        } else if (
+          candidate.appearance
+          && eventWins(versions, snapshot.board.id, BOARD_APPEARANCE_FIELD, stamp)
+        ) {
+          versions[fieldKey(snapshot.board.id, BOARD_APPEARANCE_FIELD)] = stamp;
+          if (JSON.stringify(snapshot.appearance) !== JSON.stringify(candidate.appearance)) {
+            snapshot = {
+              ...snapshot,
+              appearance: candidate.appearance,
+              cachedAt: event.occurredAt,
+            };
+            applied += 1;
+          }
         }
       }
       continue;
@@ -384,13 +433,17 @@ export function applyRoamingEvents(
     }
 
     if (!snapshot || event.operation !== 'card.put' || tombstones[event.entityId]) continue;
-    const incoming = event.payload.card as Card | undefined;
+    const rawIncoming = event.payload.card as (Card & {
+      status?: unknown;
+      completedAt?: unknown;
+    }) | undefined;
     const incomingChecklists = Array.isArray(event.payload.checklists)
       ? event.payload.checklists as Checklist[]
       : null;
-    if (!incoming || incoming.id !== event.entityId || incoming.boardId !== snapshot.board.id) {
+    if (!rawIncoming || rawIncoming.id !== event.entityId || rawIncoming.boardId !== snapshot.board.id) {
       continue;
     }
+    const incoming = stripRemovedCardState(rawIncoming);
 
     const stamp = stampOf(event);
     const fields = event.fieldMask.includes('*')

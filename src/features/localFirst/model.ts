@@ -5,9 +5,10 @@ import type {
   Card,
   Checklist,
   ChecklistItem,
+  UpdateBoardAppearanceRequest,
 } from '../../shared/types/api';
 
-export const LOCAL_SCHEMA_VERSION = 4;
+export const LOCAL_SCHEMA_VERSION = 5;
 
 export interface LocalBoardSnapshot {
   schemaVersion: typeof LOCAL_SCHEMA_VERSION;
@@ -39,7 +40,6 @@ export interface CreateCardOperation extends OperationBase {
       title: string;
       description?: string;
       columnId: string;
-      status?: Card['status'];
       priority?: Card['priority'];
     };
     tempCard: Card;
@@ -51,8 +51,16 @@ export interface UpdateCardOperation extends OperationBase {
   payload: {
     input: Partial<Pick<
       Card,
-      'title' | 'description' | 'status' | 'priority' | 'startAt' | 'dueAt' | 'completedAt'
+      'title' | 'description' | 'priority' | 'startAt' | 'dueAt'
     >>;
+  };
+}
+
+export interface UpdateBoardAppearanceOperation extends OperationBase {
+  kind: 'board.appearance.update';
+  payload: {
+    input: UpdateBoardAppearanceRequest;
+    optimistic: BoardAppearanceSettings;
   };
 }
 
@@ -130,6 +138,7 @@ export interface DeleteChecklistItemOperation extends OperationBase {
 }
 
 export type LocalOperation =
+  | UpdateBoardAppearanceOperation
   | CreateCardOperation
   | UpdateCardOperation
   | MoveCardOperation
@@ -184,6 +193,10 @@ function withChecklists(
       ...snapshot.checklistsByCardId,
       [cardId]: checklists,
     },
+    checklistsHydratedAt: [snapshot.checklistsHydratedAt, timestamp]
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) || timestamp,
     cachedAt: timestamp,
   };
 }
@@ -227,6 +240,7 @@ function nextCardPosition(cards: Card[], columnId: string) {
 }
 
 export function operationCardId(operation: LocalOperation) {
+  if (operation.kind === 'board.appearance.update') return operation.entityId;
   return isChecklistOperation(operation)
     ? operation.payload.cardId
     : operation.entityId;
@@ -241,6 +255,14 @@ export function applyOperation(
   operation: LocalOperation,
 ): LocalBoardSnapshot {
   const timestamp = operation.createdAt;
+
+  if (operation.kind === 'board.appearance.update') {
+    return {
+      ...snapshot,
+      appearance: operation.payload.optimistic,
+      cachedAt: timestamp,
+    };
+  }
 
   if (operation.kind === 'card.create') {
     const exists = snapshot.cards.some((card) => card.id === operation.payload.tempCard.id);
@@ -435,32 +457,64 @@ function remapCardIdInOperation(
 export function mergeBoardSnapshots(
   server: LocalBoardSnapshot,
   relay: LocalBoardSnapshot | null,
+  relayState?: {
+    tombstones?: Record<string, unknown>;
+    checklistTombstones?: Record<string, unknown>;
+    checklistItemTombstones?: Record<string, unknown>;
+  },
 ) {
   if (!relay || relay.board.id !== server.board.id) return server;
-  const byId = new Map(server.cards.map((card) => [card.id, card]));
-  const checklistSources: Record<string, 'server' | 'relay'> = {};
-  for (const card of server.cards) checklistSources[card.id] = 'server';
+  const cardTombstones = relayState?.tombstones || {};
+  const checklistTombstones = relayState?.checklistTombstones || {};
+  const checklistItemTombstones = relayState?.checklistItemTombstones || {};
+  const byId = new Map(
+    server.cards
+      .filter((card) => !cardTombstones[card.id])
+      .map((card) => [card.id, card]),
+  );
   for (const card of relay.cards) {
+    if (cardTombstones[card.id]) continue;
     const current = byId.get(card.id);
     if (!current || card.updatedAt.localeCompare(current.updatedAt) > 0) {
       byId.set(card.id, card);
-      checklistSources[card.id] = 'relay';
     }
   }
   const cards = [...byId.values()];
   const checklistsByCardId = Object.fromEntries(cards.map((card) => {
-    const source = checklistSources[card.id] === 'relay' ? relay : server;
+    const byChecklistId = new Map<string, Checklist>();
+    const sources = [
+      ...(server.checklistsByCardId[card.id] || []),
+      ...(relay.checklistsByCardId[card.id] || []),
+    ];
+    for (const checklist of sources) {
+      if (checklistTombstones[checklist.id]) continue;
+      const current = byChecklistId.get(checklist.id);
+      const preferred = !current || checklist.updatedAt.localeCompare(current.updatedAt) > 0
+        ? checklist
+        : current;
+      const items = new Map<string, ChecklistItem>();
+      for (const item of [...(current?.items || []), ...(checklist.items || [])]) {
+        if (checklistItemTombstones[item.id]) continue;
+        const existing = items.get(item.id);
+        if (!existing || item.updatedAt.localeCompare(existing.updatedAt) > 0) {
+          items.set(item.id, item);
+        }
+      }
+      byChecklistId.set(checklist.id, {
+        ...preferred,
+        items: [...items.values()].sort((left, right) => left.position - right.position),
+      });
+    }
     return [
       card.id,
-      source.checklistsByCardId[card.id]
-        || relay.checklistsByCardId[card.id]
-        || server.checklistsByCardId[card.id]
-        || [],
+      [...byChecklistId.values()].sort((left, right) => left.position - right.position),
     ];
   }));
   return {
     ...server,
-    appearance: server.appearance,
+    appearance: (relay.appearance.updatedAt || '').localeCompare(server.appearance.updatedAt || '') > 0
+      ? relay.appearance
+      : server.appearance,
     cards: cards.map((card) => ({
       ...card,
       ...checklistCounts(checklistsByCardId[card.id] || []),
@@ -585,7 +639,6 @@ export function createTemporaryCard(input: {
   columnId: string;
   title: string;
   description?: string;
-  status?: Card['status'];
   priority?: Card['priority'];
   cards: Card[];
   now: string;
@@ -597,12 +650,10 @@ export function createTemporaryCard(input: {
     parentCardId: null,
     title: input.title,
     description: input.description || null,
-    status: input.status ?? 'active',
     priority: input.priority ?? null,
     position: nextCardPosition(input.cards, input.columnId),
     startAt: null,
     dueAt: null,
-    completedAt: null,
     isArchived: false,
     labelIds: [],
     checklistCount: 0,

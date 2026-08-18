@@ -11,7 +11,6 @@ const card = (id: string, columnId: string, position: number): Card => ({
   boardId: 'board',
   columnId,
   title: id,
-  status: 'active',
   priority: null,
   position,
   isArchived: false,

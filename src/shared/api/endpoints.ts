@@ -277,7 +277,6 @@ export function createCard(boardId: string, input: {
   title: string;
   description?: string;
   columnId: string;
-  status?: Card['status'];
   priority?: Card['priority'];
 }) {
   return apiRequest<Card>(`/boards/${boardId}/cards`, {
@@ -288,7 +287,7 @@ export function createCard(boardId: string, input: {
 
 export function updateCard(cardId: string, input: Partial<Pick<
   Card,
-  'title' | 'description' | 'status' | 'priority' | 'startAt' | 'dueAt' | 'completedAt'
+  'title' | 'description' | 'priority' | 'startAt' | 'dueAt'
 >>) {
   return apiRequest<Card>(`/cards/${cardId}`, {
     method: 'PATCH',

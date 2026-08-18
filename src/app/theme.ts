@@ -1,6 +1,7 @@
 import { useColorScheme } from 'react-native';
 
 import { useAppearance } from '../features/appearance/AppearanceProvider';
+import { useColorOverride } from './ColorOverrideProvider';
 
 export interface AppColors {
   background: string;
@@ -51,7 +52,9 @@ export const darkColors: AppColors = {
 };
 
 export function useAppColors() {
-  return useResolvedTheme() === 'dark' ? darkColors : lightColors;
+  const base = useResolvedTheme() === 'dark' ? darkColors : lightColors;
+  const override = useColorOverride();
+  return override ? { ...base, ...override } : base;
 }
 
 export function useResolvedTheme() {

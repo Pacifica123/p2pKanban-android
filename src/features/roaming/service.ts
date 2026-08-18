@@ -67,6 +67,7 @@ async function identity() {
 }
 
 function fieldsFor(operation: LocalOperation) {
+  if (operation.kind === 'board.appearance.update') return ['appearance'];
   if (operation.kind === 'card.delete') return ['__lifecycle'];
   if (isChecklistOperation(operation)) return ['checklists'];
   if (operation.kind === 'card.create') return ['*'];
@@ -247,6 +248,25 @@ export async function publishLocalOperation(
   operation: LocalOperation,
   snapshot: LocalBoardSnapshot,
 ) {
+  if (operation.kind === 'board.appearance.update') {
+    const { replicaId } = await identity();
+    const logicalClock = operationSequence(operation);
+    return publishEvent(capability, {
+      protocolVersion: ROAMING_PROTOCOL_VERSION,
+      eventId: operation.id,
+      workspaceId: capability.workspaceId,
+      boardId: capability.boardId,
+      replicaId,
+      replicaSeq: logicalClock,
+      logicalClock,
+      entityType: 'board',
+      entityId: capability.boardId,
+      operation: 'board.appearance.put',
+      fieldMask: fieldsFor(operation),
+      payload: { appearance: operation.payload.optimistic },
+      occurredAt: operation.createdAt,
+    });
+  }
   const cardId = operationCardId(operation);
   const card = operation.kind === 'card.delete'
     ? operation.payload.card

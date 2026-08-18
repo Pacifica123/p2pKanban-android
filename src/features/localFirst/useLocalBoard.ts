@@ -24,11 +24,17 @@ import {
   moveCard as moveCardRemote,
   provisionRoamingBoard,
   unarchiveCard as unarchiveCardRemote,
+  updateBoardAppearance as updateBoardAppearanceRemote,
   updateCard as updateCardRemote,
   updateChecklist as updateChecklistRemote,
   updateChecklistItem as updateChecklistItemRemote,
 } from '../../shared/api/endpoints';
-import type { Card, Checklist, ChecklistItem } from '../../shared/types/api';
+import type {
+  Card,
+  Checklist,
+  ChecklistItem,
+  UpdateBoardAppearanceRequest,
+} from '../../shared/types/api';
 import {
   installRoamingCapability,
   loadRoamingCapability,
@@ -84,12 +90,12 @@ export interface LocalBoardRuntime {
     title: string;
     description?: string;
     columnId: string;
-    status?: Card['status'];
     priority?: Card['priority'];
   }) => Promise<Card>;
+  updateAppearance: (input: UpdateBoardAppearanceRequest) => Promise<void>;
   updateCard: (cardId: string, input: Partial<Pick<
     Card,
-    'title' | 'description' | 'status' | 'priority' | 'startAt' | 'dueAt' | 'completedAt'
+    'title' | 'description' | 'priority' | 'startAt' | 'dueAt'
   >>) => Promise<void>;
   moveCard: (
     cardId: string,
@@ -238,6 +244,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
     let relayReceived = 0;
     let relayFailure: unknown = null;
     let relaySnapshot: LocalBoardSnapshot | null = null;
+    let relayApplyState: Awaited<ReturnType<typeof pullRoamingBoard>>['applyState'] | undefined;
     try {
       await runSerialized(async () => {
         const storedCapability = roamingCapabilityRef.current
@@ -248,6 +255,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
             const relay = await pullRoamingBoard(storedCapability, snapshotRef.current);
             relayReceived = relay.received;
             relaySnapshot = relay.snapshot;
+            relayApplyState = relay.applyState;
             const nextHidden = await pruneLocallyHiddenCards(
               boardId,
               Object.keys(relay.applyState.tombstones || {}),
@@ -283,7 +291,7 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
           setLocallyHidden(nextHidden);
           const seeded = applyLocalCardVisibility(coordinatorSnapshot, nextHidden);
           nodeUnavailableUntilRef.current = 0;
-          const mergedBase = mergeBoardSnapshots(seeded, relaySnapshot);
+          const mergedBase = mergeBoardSnapshots(seeded, relaySnapshot, relayApplyState);
           const merged = await persistServerSnapshot(mergedBase, allOperations);
           applyState(merged, allOperations);
 
@@ -377,7 +385,17 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
             let nextSnapshot: LocalBoardSnapshot = currentSnapshot;
             let nextOperations = allOperations;
 
-            if (current.kind === 'card.create') {
+            if (current.kind === 'board.appearance.update') {
+              const saved = await updateBoardAppearanceRemote(
+                boardId,
+                current.payload.input,
+              );
+              nextSnapshot = {
+                ...nextSnapshot,
+                appearance: saved,
+                cachedAt: saved.updatedAt || now(),
+              };
+            } else if (current.kind === 'card.create') {
               const created = await createCardRemote(boardId, current.payload.input);
               const replaced = replaceCreatedCard(
                 nextSnapshot,
@@ -620,7 +638,6 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
         columnId: input.columnId,
         title: input.title,
         description: input.description,
-        status: input.status,
         priority: input.priority,
         cards: snapshotRef.current.cards,
         now: createdAt,
@@ -632,6 +649,27 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
         payload: { input, tempCard },
       });
       return tempCard;
+    },
+    updateAppearance: async (input) => {
+      const current = snapshotRef.current;
+      if (!current) throw new Error('Доска ещё не загружена.');
+      const timestamp = now();
+      await enqueue({
+        ...operationBase(boardId, boardId),
+        createdAt: timestamp,
+        kind: 'board.appearance.update',
+        payload: {
+          input,
+          optimistic: {
+            ...current.appearance,
+            ...input,
+            wallpaper: input.wallpaper || current.appearance.wallpaper,
+            customProperties: input.customProperties || current.appearance.customProperties,
+            isCustomized: true,
+            updatedAt: timestamp,
+          },
+        },
+      });
     },
     updateCard: async (cardId, input) => enqueue({
       ...operationBase(boardId, cardId),

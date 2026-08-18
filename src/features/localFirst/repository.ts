@@ -7,6 +7,7 @@ import {
   type LocalBoardSnapshot,
   type LocalOperation,
 } from './model';
+import type { Card } from '../../shared/types/api';
 import { defaultBoardAppearance } from '../appearance/boardTheme';
 
 const QUEUE_SUFFIX = 'local-first/operations';
@@ -26,7 +27,46 @@ function parse<T>(raw: string | null, fallback: T): T {
 
 export async function loadOperationQueue() {
   const raw = await AsyncStorage.getItem(sessionStorageKey(QUEUE_SUFFIX));
-  return parse<LocalOperation[]>(raw, []).filter((operation) => Boolean(operation.id && operation.boardId));
+  return parse<Array<LocalOperation & { payload: Record<string, unknown> }>>(raw, [])
+    .map(migrateOperation)
+    .filter((operation): operation is LocalOperation => Boolean(operation?.id && operation.boardId));
+}
+
+function stripRemovedCardState(
+  value: Card & { status?: unknown; completedAt?: unknown },
+): Card {
+  const { status: _status, completedAt: _completedAt, ...card } = value;
+  return card;
+}
+
+function stripRemovedCardInput(value: Record<string, unknown>) {
+  const { status: _status, completedAt: _completedAt, ...input } = value;
+  return input;
+}
+
+function migrateOperation(
+  operation: LocalOperation & { payload: Record<string, unknown> },
+): LocalOperation | null {
+  if (operation.kind === 'card.create') {
+    const payload = operation.payload as unknown as {
+      input: Record<string, unknown>;
+      tempCard: Card & { status?: unknown; completedAt?: unknown };
+    };
+    return {
+      ...operation,
+      payload: {
+        input: stripRemovedCardInput(payload.input),
+        tempCard: stripRemovedCardState(payload.tempCard),
+      },
+    } as LocalOperation;
+  }
+  if (operation.kind === 'card.update') {
+    const payload = operation.payload as unknown as { input: Record<string, unknown> };
+    const input = stripRemovedCardInput(payload.input);
+    if (!Object.keys(input).length) return null;
+    return { ...operation, payload: { input } } as LocalOperation;
+  }
+  return operation as LocalOperation;
 }
 
 export async function loadBoardSnapshot(boardId: string) {
@@ -41,11 +81,14 @@ export async function loadBoardSnapshot(boardId: string) {
     checklistsHydratedAt?: string | null;
   }) | null>(raw, null);
   if (!snapshot || !snapshot.board?.id) return null;
-  if (![1, 2, 3, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
+  if (![1, 2, 3, 4, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
   const migrated: LocalBoardSnapshot = {
     ...snapshot,
     schemaVersion: LOCAL_SCHEMA_VERSION,
     appearance: snapshot.appearance || defaultBoardAppearance(snapshot.board.id),
+    cards: snapshot.cards.map((card) => stripRemovedCardState(
+      card as Card & { status?: unknown; completedAt?: unknown },
+    )),
     checklistsByCardId: snapshot.checklistsByCardId || {},
     checklistsHydratedAt: snapshot.checklistsHydratedAt || null,
   };

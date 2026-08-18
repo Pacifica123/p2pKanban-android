@@ -346,14 +346,17 @@ export function BoardAppearanceModal({
       </View>
 
       {!online ? (
-        <InlineNotice text="Оформление доски сохраняется на узле; подключитесь к нему." tone="warning" />
+        <InlineNotice
+          text="Изменение сохранится на телефоне и уйдёт на узел через relay, когда появится связь."
+          tone="warning"
+        />
       ) : null}
       {error ? <InlineNotice text={error} tone="danger" /> : null}
       <Button
         label="Сохранить оформление"
         variant="primary"
         loading={saving}
-        disabled={!online || invalidAccent || invalidWallpaper || invalidImage}
+        disabled={invalidAccent || invalidWallpaper || invalidImage}
         onPress={() => void save()}
       />
     </FormModal>

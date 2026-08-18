@@ -12,12 +12,18 @@ import {
 } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
+import { ColorOverrideProvider } from '../../app/ColorOverrideProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
-import { radius, spacing, useAppColors, useResolvedTheme } from '../../app/theme';
+import {
+  radius,
+  spacing,
+  type AppColors,
+  useAppColors,
+  useResolvedTheme,
+} from '../../app/theme';
 import {
   createColumn,
   deleteColumn,
-  updateBoardAppearance,
   updateColumn,
 } from '../../shared/api/endpoints';
 import type { BoardAppearanceSettings, BoardColumn, Card } from '../../shared/types/api';
@@ -47,21 +53,11 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Board'>;
 
-const statusLabels: Record<string, string> = {
-  active: 'Активно',
-  blocked: 'Заблокировано',
-  cancelled: 'Отменено',
-  completed: 'Завершено',
-  done: 'Готово',
-  in_progress: 'В работе',
-  todo: 'Запланировано',
-};
-
-const priorityLabels: Record<string, string> = {
-  high: 'Высокий',
-  low: 'Низкий',
-  medium: 'Средний',
-  urgent: 'Срочно',
+const priorityStars: Record<string, string> = {
+  low: '★',
+  medium: '★★',
+  high: '★★★',
+  urgent: '★★★★',
 };
 
 function DragHandle({
@@ -206,17 +202,12 @@ function CardPreview({
           {card.isArchived ? (
             <Text style={[styles.metaText, { color: colors.warning }]}>В архиве</Text>
           ) : null}
-          {card.status ? (
-            <Text style={[styles.metaText, { color: palette.muted }]}>
-              {statusLabels[card.status] || card.status}
-            </Text>
-          ) : null}
           {card.priority ? (
             <Text style={[
               styles.metaText,
               { color: card.priority === 'urgent' ? colors.danger : palette.muted },
             ]}>
-              {priorityLabels[card.priority] || card.priority}
+              {priorityStars[card.priority] || card.priority}
             </Text>
           ) : null}
           {operationState ? (
@@ -270,6 +261,19 @@ export function BoardScreen({ navigation, route }: Props) {
     () => resolveBoardPalette(appearance, resolvedTheme),
     [appearance, resolvedTheme],
   );
+  const boardModalColors = useMemo<AppColors>(() => ({
+    ...colors,
+    background: boardPalette.background,
+    surface: boardPalette.card,
+    surfaceMuted: boardPalette.column,
+    border: boardPalette.border,
+    text: boardPalette.text,
+    muted: boardPalette.muted,
+    accent: boardPalette.accent,
+    accentSoft: /^#[0-9a-f]{6}$/i.test(boardPalette.accent)
+      ? `${boardPalette.accent}26`
+      : colors.accentSoft,
+  }), [boardPalette, colors]);
   const columns = useMemo(
     () => [...(snapshot?.columns || [])].sort((left, right) => left.position - right.position),
     [snapshot?.columns],
@@ -292,13 +296,12 @@ export function BoardScreen({ navigation, route }: Props) {
     navigation.setParams({ focusCardId: undefined });
   }, [navigation, route.params.focusCardId, snapshot?.cards]);
 
-  async function saveAppearance(input: Parameters<typeof updateBoardAppearance>[1]) {
+  async function saveAppearance(input: Parameters<typeof runtime.updateAppearance>[0]) {
     if (appearanceBusy) return;
     setAppearanceBusy(true);
     setAppearanceError(null);
     try {
-      await updateBoardAppearance(boardId, input);
-      await runtime.refresh();
+      await runtime.updateAppearance(input);
       setAppearanceModal(false);
     } catch (error) {
       setAppearanceError(error instanceof Error
@@ -318,7 +321,6 @@ export function BoardScreen({ navigation, route }: Props) {
         title: newCardTitle.trim(),
         description: newCardDescription.trim() || undefined,
         columnId: createCardColumnId,
-        status: 'active',
       });
       setCreateCardColumnId(null);
       setNewCardTitle('');
@@ -852,12 +854,14 @@ export function BoardScreen({ navigation, route }: Props) {
         onSave={saveAppearance}
       />
 
-      <CardDetailsModal
-        card={selectedCard}
-        columns={columns}
-        runtime={runtime}
-        onClose={() => setSelectedCardId(null)}
-      />
+      <ColorOverrideProvider colors={boardModalColors}>
+        <CardDetailsModal
+          card={selectedCard}
+          columns={columns}
+          runtime={runtime}
+          onClose={() => setSelectedCardId(null)}
+        />
+      </ColorOverrideProvider>
 
       {dragState ? (
         <View

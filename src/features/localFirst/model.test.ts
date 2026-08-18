@@ -11,6 +11,7 @@ import {
   createTemporaryCard,
   createTemporaryChecklist,
   createTemporaryChecklistItem,
+  mergeBoardSnapshots,
   replaceCreatedCard,
   replaceCreatedChecklist,
   replaceCreatedChecklistItem,
@@ -61,6 +62,80 @@ function snapshot(cards: Card[] = []): LocalBoardSnapshot {
 }
 
 describe('local-first reducer', () => {
+  it('keeps a fresh relay checklist item when the coordinator snapshot is stale', () => {
+    const localCard = createTemporaryCard({
+      id: 'shared-card',
+      boardId: board.id,
+      columnId: columnA.id,
+      title: 'Сверка',
+      cards: [],
+      now: board.updatedAt,
+    });
+    const checklist = createTemporaryChecklist({
+      id: 'shared-checklist',
+      cardId: localCard.id,
+      title: 'Пункты',
+      checklists: [],
+      now: board.updatedAt,
+    });
+    const first = createTemporaryChecklistItem({
+      id: 'first-item',
+      checklistId: checklist.id,
+      title: 'Первый',
+      items: [],
+      now: board.updatedAt,
+    });
+    const second = createTemporaryChecklistItem({
+      id: 'relay-item',
+      checklistId: checklist.id,
+      title: 'Только в relay',
+      items: [first],
+      now: '2026-07-26T10:05:00Z',
+    });
+    const server = snapshot([localCard]);
+    server.checklistsByCardId[localCard.id] = [{ ...checklist, items: [first] }];
+    const relay = snapshot([localCard]);
+    relay.checklistsByCardId[localCard.id] = [{
+      ...checklist,
+      updatedAt: second.updatedAt,
+      items: [first, second],
+    }];
+
+    const merged = mergeBoardSnapshots(server, relay);
+
+    expect(merged.checklistsByCardId[localCard.id]?.[0]?.items.map((item) => item.id))
+      .toEqual(['first-item', 'relay-item']);
+    expect(merged.cards[0]?.checklistItemCount).toBe(2);
+  });
+
+  it('does not resurrect coordinator checklist data covered by relay tombstones', () => {
+    const localCard = createTemporaryCard({
+      id: 'tombstone-card',
+      boardId: board.id,
+      columnId: columnA.id,
+      title: 'Удаления',
+      cards: [],
+      now: board.updatedAt,
+    });
+    const checklist = createTemporaryChecklist({
+      id: 'stale-checklist',
+      cardId: localCard.id,
+      title: 'Уже удалён',
+      checklists: [],
+      now: board.updatedAt,
+    });
+    const server = snapshot([localCard]);
+    server.checklistsByCardId[localCard.id] = [{ ...checklist, items: [] }];
+    const relay = snapshot([localCard]);
+
+    const merged = mergeBoardSnapshots(server, relay, {
+      checklistTombstones: { [checklist.id]: {} },
+    });
+
+    expect(merged.checklistsByCardId[localCard.id]).toEqual([]);
+    expect(merged.cards[0]?.checklistCount).toBe(0);
+  });
+
   it('replays create, update and move in their original order', () => {
     const temp = createTemporaryCard({
       id: 'local-card-one',

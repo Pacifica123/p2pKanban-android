@@ -85,16 +85,6 @@ export interface ColumnListResponse {
   items: BoardColumn[];
 }
 
-export type CardStatus =
-  | 'active'
-  | 'completed'
-  | 'cancelled'
-  | 'todo'
-  | 'in_progress'
-  | 'blocked'
-  | 'done'
-  | null;
-
 export type CardPriority = 'low' | 'medium' | 'high' | 'urgent' | null;
 
 export interface Card {
@@ -104,12 +94,10 @@ export interface Card {
   parentCardId?: string | null;
   title: string;
   description?: string | null;
-  status: CardStatus;
   priority: CardPriority;
   position: number;
   startAt?: string | null;
   dueAt?: string | null;
-  completedAt?: string | null;
   isArchived: boolean;
   labelIds?: string[];
   checklistCount?: number;
