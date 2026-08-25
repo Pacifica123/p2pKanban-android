@@ -112,6 +112,7 @@ function CardPreview({
   appearance,
   palette,
   operationState,
+  draggable,
   onPress,
   onDragStart,
   onDragMove,
@@ -122,6 +123,7 @@ function CardPreview({
   appearance: BoardAppearanceSettings;
   palette: BoardPalette;
   operationState: 'pending' | 'failed' | null;
+  draggable: boolean;
   onPress: () => void;
   onDragStart: (pageX: number, pageY: number) => void;
   onDragMove: (pageX: number, pageY: number) => void;
@@ -154,12 +156,14 @@ function CardPreview({
         >
           <Text style={[styles.cardTitle, { color: palette.text }]}>{card.title}</Text>
         </Pressable>
-        <DragHandle
-          onStart={onDragStart}
-          onMove={onDragMove}
-          onEnd={onDragEnd}
-          onCancel={onDragCancel}
-        />
+        {draggable ? (
+          <DragHandle
+            onStart={onDragStart}
+            onMove={onDragMove}
+            onEnd={onDragEnd}
+            onCancel={onDragCancel}
+          />
+        ) : null}
       </View>
       <Pressable
         onPress={onPress}
@@ -225,12 +229,19 @@ function CardPreview({
 }
 
 export function BoardScreen({ navigation, route }: Props) {
-  const { workspaceId, boardId, boardName } = route.params;
+  const {
+    workspaceId,
+    boardId,
+    boardName,
+    workspaceRole = 'member',
+    accessEpoch = 1,
+  } = route.params;
+  const canEdit = workspaceRole === 'owner' || workspaceRole === 'member';
   const colors = useAppColors();
   const resolvedTheme = useResolvedTheme();
   const { width, height } = useWindowDimensions();
   const { isOnline } = useNetwork();
-  const runtime = useLocalBoard(boardId, workspaceId);
+  const runtime = useLocalBoard(boardId, workspaceId, accessEpoch, canEdit);
   const exitController = useMemo(
     () => createBoardExitController(() => navigation.pop()),
     [navigation],
@@ -311,7 +322,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }, [navigation, route.params.focusCardId, snapshot?.cards]);
 
   async function saveAppearance(input: Parameters<typeof runtime.updateAppearance>[0]) {
-    if (appearanceBusy) return;
+    if (!canEdit || appearanceBusy) return;
     setAppearanceBusy(true);
     setAppearanceError(null);
     try {
@@ -327,7 +338,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   async function submitCard() {
-    if (!createCardColumnId || !newCardTitle.trim() || formBusy) return;
+    if (!canEdit || !createCardColumnId || !newCardTitle.trim() || formBusy) return;
     setFormBusy(true);
     setFormError(null);
     try {
@@ -347,7 +358,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   async function submitColumn() {
-    if (!newColumnName.trim() || formBusy) return;
+    if (!canEdit || !newColumnName.trim() || formBusy) return;
     setFormBusy(true);
     setFormError(null);
     try {
@@ -379,6 +390,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   function openCreateColumn() {
+    if (!canEdit) return;
     setFormError(null);
     setEditingColumn(null);
     setNewColumnName('');
@@ -387,6 +399,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   function openColumnActions(column: BoardColumn) {
+    if (!canEdit) return;
     Alert.alert(column.name, 'Выберите действие с колонкой.', [
       { text: 'Отмена', style: 'cancel' },
       {
@@ -435,6 +448,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   function moveDrag(pageX: number, pageY: number) {
+    if (!canEdit) return;
     const current = dragRef.current;
     if (!current || !columns.length) return;
     const targetIndex = getDropColumnIndex({
@@ -483,6 +497,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   function startDrag(card: Card, pageX: number, pageY: number) {
+    if (!canEdit) return;
     updateDragState({
       cardId: card.id,
       sourceColumnId: card.columnId,
@@ -495,7 +510,7 @@ export function BoardScreen({ navigation, route }: Props) {
   async function finishDrag() {
     const current = dragRef.current;
     updateDragState(null);
-    if (!current || current.targetColumnId === current.sourceColumnId) return;
+    if (!canEdit || !current || current.targetColumnId === current.sourceColumnId) return;
     const latestCards = runtime.snapshot?.cards || [];
     const position = getAppendPosition(
       latestCards,
@@ -513,12 +528,7 @@ export function BoardScreen({ navigation, route }: Props) {
 
   let syncText = 'Синхронизировано';
   let syncTone: 'neutral' | 'danger' | 'warning' | 'success' = 'success';
-  if (!isOnline) {
-    syncText = runtime.syncMode === 'roaming'
-      ? 'Нет интернета · доска работает локально'
-      : 'Нет связи · изменения сохраняются на устройстве';
-    syncTone = 'warning';
-  } else if (runtime.failedCount) {
+  if (runtime.failedCount) {
     syncText = `Требуют проверки: ${formatCountRu(runtime.failedCount, 'изменение', 'изменения', 'изменений')}`;
     syncTone = 'danger';
   } else if (runtime.flushing) {
@@ -526,6 +536,14 @@ export function BoardScreen({ navigation, route }: Props) {
     syncTone = 'neutral';
   } else if (runtime.pendingCount) {
     syncText = `Сохранено на устройстве: ${formatCountRu(runtime.pendingCount, 'изменение', 'изменения', 'изменений')}`;
+    syncTone = 'warning';
+  } else if (runtime.relayPendingCount) {
+    syncText = `Реле приняло ${formatCountRu(runtime.relayPendingCount, 'изменение', 'изменения', 'изменений')} · ждём подтверждения узлом`;
+    syncTone = 'warning';
+  } else if (!isOnline) {
+    syncText = runtime.syncMode === 'roaming'
+      ? 'Нет интернета · доска работает локально'
+      : 'Нет связи · изменения сохраняются на устройстве';
     syncTone = 'warning';
   } else if (runtime.syncMode === 'roaming') {
     syncText = `Независимая синхронизация · ${formatCountRu(runtime.relayCount, 'реле', 'реле', 'реле')}`;
@@ -589,7 +607,7 @@ export function BoardScreen({ navigation, route }: Props) {
           <View style={styles.statusNotice}>
             <InlineNotice text={syncText} tone={syncTone} />
           </View>
-          {runtime.failedCount ? (
+          {runtime.failedCount && canEdit ? (
             <Button label="Повторить" compact onPress={() => void runtime.retryFailed()} />
           ) : (
             <Button
@@ -603,10 +621,12 @@ export function BoardScreen({ navigation, route }: Props) {
         </View>
 
         <View style={styles.boardTools}>
-          <Text style={[styles.dragHint, { color: boardPalette.muted }]}>
-            Тяните карточку за ≡ к краю экрана, чтобы перейти в соседнюю колонку.
+          <Text style={[styles.dragHint, { color: boardPalette.muted }]}> 
+            {canEdit
+              ? 'Тяните карточку за ≡ к краю экрана, чтобы перейти в соседнюю колонку.'
+              : 'Только чтение: роль гостя не изменяет общую доску.'}
           </Text>
-          <Button
+          {canEdit ? <Button
             label="Оформление"
             compact
             variant="ghost"
@@ -615,7 +635,7 @@ export function BoardScreen({ navigation, route }: Props) {
               setAppearanceError(null);
               setAppearanceModal(true);
             }}
-          />
+          /> : null}
           <Button
             label={showArchived ? 'Скрыть архив' : 'Показать архив'}
             compact
@@ -642,8 +662,10 @@ export function BoardScreen({ navigation, route }: Props) {
       {!columns.length ? (
         <StateView
           title="На доске нет колонок"
-          description={isOnline ? 'Добавьте первую колонку.' : 'Создать колонку можно после подключения.'}
-          action={isOnline
+          description={canEdit
+            ? (isOnline ? 'Добавьте первую колонку.' : 'Создать колонку можно после подключения.')
+            : 'Гостевой доступ: доска открыта только для чтения.'}
+          action={isOnline && canEdit
             ? <Button label="Добавить колонку" variant="primary" onPress={openCreateColumn} />
             : undefined}
         />
@@ -685,7 +707,7 @@ export function BoardScreen({ navigation, route }: Props) {
                     {column.name}
                   </Text>
                   <Text style={[styles.columnCount, { color: boardPalette.muted }]}>{cards.length}</Text>
-                  <Pressable
+                  {canEdit ? <Pressable
                     onPress={() => openColumnActions(column)}
                     accessibilityRole="button"
                     accessibilityLabel={`Действия с колонкой ${column.name}`}
@@ -698,9 +720,9 @@ export function BoardScreen({ navigation, route }: Props) {
                     ]}
                   >
                     <Text style={[styles.columnMenuText, { color: boardPalette.muted }]}>•••</Text>
-                  </Pressable>
+                  </Pressable> : null}
                 </View>
-                <Button
+                {canEdit ? <Button
                   label="Добавить карточку"
                   compact
                   variant="ghost"
@@ -708,7 +730,7 @@ export function BoardScreen({ navigation, route }: Props) {
                     setFormError(null);
                     setCreateCardColumnId(column.id);
                   }}
-                />
+                /> : null}
                 <ScrollView
                   style={styles.cardList}
                   contentContainerStyle={styles.cardListContent}
@@ -722,6 +744,7 @@ export function BoardScreen({ navigation, route }: Props) {
                       appearance={appearance}
                       palette={boardPalette}
                       operationState={runtime.cardOperationState(card.id)}
+                      draggable={canEdit}
                       onPress={() => setSelectedCardId(card.id)}
                       onDragStart={(pageX, pageY) => startDrag(card, pageX, pageY)}
                       onDragMove={moveDrag}
@@ -739,7 +762,7 @@ export function BoardScreen({ navigation, route }: Props) {
             );
           })}
 
-          <View
+          {canEdit ? <View
             style={[
               styles.addColumn,
               {
@@ -760,7 +783,7 @@ export function BoardScreen({ navigation, route }: Props) {
               disabled={!isOnline}
               onPress={openCreateColumn}
             />
-          </View>
+          </View> : null}
         </ScrollView>
       )}
 
@@ -873,6 +896,7 @@ export function BoardScreen({ navigation, route }: Props) {
           card={selectedCard}
           columns={columns}
           runtime={runtime}
+          readOnly={!canEdit}
           onClose={() => setSelectedCardId(null)}
         />
       </ColorOverrideProvider>

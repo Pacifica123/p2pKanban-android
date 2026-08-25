@@ -59,6 +59,10 @@ requireText('src/shared/api/endpoints.ts', [
   'replaceCardLabels',
   'createComment',
   'deleteComment',
+  'createWorkspaceInvitation',
+  'revokeWorkspaceInvitation',
+  'updateWorkspaceMember',
+  'removeWorkspaceMember',
 ]);
 requireText('src/features/localFirst/model.ts', [
   "kind: 'board.appearance.update'",
@@ -74,6 +78,15 @@ requireText('src/features/localFirst/model.ts', [
   'checklistsHydratedAt',
   'checklistTombstones',
   'checklistItemTombstones',
+  "status: 'pending' | 'relay_pending' | 'failed'",
+  'accessEpoch?',
+]);
+requireText('src/features/localFirst/delivery.ts', [
+  'markRelayAccepted',
+  "status: 'relay_pending'",
+  'awaitsCoordinatorConfirmation',
+  'relayOperationIsInCoordinatorSnapshot',
+  'relayCreateRequiresProjectionConfirmation',
 ]);
 requireText('src/features/localFirst/useLocalBoard.ts', [
   'const publishFallback',
@@ -86,6 +99,10 @@ requireText('src/features/localFirst/useLocalBoard.ts', [
   'restoreCardOnThisDevice',
   'InteractionManager.runAfterInteractions',
   'initialSyncTaskRef.current?.cancel()',
+  'markRelayAccepted',
+  'relayPendingCount',
+  'capabilityEpoch',
+  'canEdit',
 ]);
 requireText('src/features/roaming/service.ts', [
   "operation: 'board.appearance.put'",
@@ -104,6 +121,9 @@ requireText('src/features/boards/BoardScreen.tsx', [
   'resolveBoardPalette',
   "BackHandler.addEventListener('hardwareBackPress', leaveBoard)",
   'createBoardExitController(() => navigation.pop())',
+  'relayPendingCount',
+  'workspaceRole',
+  'Только чтение',
 ]);
 requireText('src/features/cards/CardDetailsModal.tsx', [
   'PriorityStars',
@@ -118,6 +138,23 @@ requireText('src/features/cards/CardDetailsModal.tsx', [
   'Удалить везде',
   'scheduleCardReminder',
   'cancelCardReminder',
+  'readOnly',
+]);
+requireText('src/features/workspaces/WorkspaceAccessScreen.tsx', [
+  'owner',
+  'member',
+  'guest',
+  'createWorkspaceInvitation',
+  'revokeWorkspaceInvitation',
+  'Share.share',
+]);
+requireText('src/features/roaming/service.ts', [
+  'capabilityEpoch',
+  'writerPublicKeys',
+  'canWrite',
+]);
+requireText('src/features/roaming/storage.ts', [
+  'resetRoamingApplyState',
 ]);
 forbidText('src/features/cards/CardDetailsModal.tsx', [
   'CardStatus',

@@ -10,6 +10,9 @@ export interface RoamingCapability {
   boardId: string;
   boardTag: string;
   boardKey: string;
+  capabilityEpoch: number;
+  canWrite: boolean;
+  writerPublicKeys: string[];
   relays: string[];
   eventKind: number;
   minimumRelayAcks: number;
@@ -27,6 +30,7 @@ export interface RoamingBoardEvent {
   eventId: string;
   workspaceId: string;
   boardId: string;
+  capabilityEpoch: number;
   replicaId: string;
   replicaSeq: number;
   logicalClock: number;

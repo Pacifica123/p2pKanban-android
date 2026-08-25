@@ -24,7 +24,12 @@ import type {
   UpdateUserAppearancePreferencesRequest,
   UserAppearancePreferences,
   Workspace,
+  WorkspaceInvitation,
+  CreatedWorkspaceInvitationResponse,
+  WorkspaceInvitationsListResponse,
   WorkspaceListResponse,
+  WorkspaceMember,
+  WorkspaceMembersListResponse,
 } from '../types/api';
 import { apiRequest } from './client';
 
@@ -110,6 +115,52 @@ export function getSession() {
 
 export function getWorkspaces() {
   return apiRequest<WorkspaceListResponse>('/workspaces');
+}
+
+export function getWorkspace(workspaceId: string) {
+  return apiRequest<Workspace & { members: WorkspaceMember[] }>(`/workspaces/${workspaceId}`);
+}
+
+export function getWorkspaceMembers(workspaceId: string) {
+  return apiRequest<WorkspaceMembersListResponse>(`/workspaces/${workspaceId}/members`);
+}
+
+export function updateWorkspaceMember(
+  workspaceId: string,
+  memberId: string,
+  role: 'member' | 'guest',
+) {
+  return apiRequest<WorkspaceMember>(`/workspaces/${workspaceId}/members/${memberId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export function removeWorkspaceMember(workspaceId: string, memberId: string) {
+  return apiRequest<WorkspaceMember>(`/workspaces/${workspaceId}/members/${memberId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function getWorkspaceInvitations(workspaceId: string) {
+  return apiRequest<WorkspaceInvitationsListResponse>(`/workspaces/${workspaceId}/invitations`);
+}
+
+export function createWorkspaceInvitation(
+  workspaceId: string,
+  input: { role: 'member' | 'guest'; expiresInHours: number },
+) {
+  return apiRequest<CreatedWorkspaceInvitationResponse>(`/workspaces/${workspaceId}/invitations`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function revokeWorkspaceInvitation(workspaceId: string, invitationId: string) {
+  return apiRequest<WorkspaceInvitation>(
+    `/workspaces/${workspaceId}/invitations/${invitationId}`,
+    { method: 'DELETE' },
+  );
 }
 
 export function createWorkspace(input: {
@@ -419,12 +470,12 @@ export function pullWorkspace(input: {
   }>(`/sync/pull?${query.toString()}`);
 }
 
-export function provisionRoamingBoard(boardId: string) {
+export function provisionRoamingBoard(boardId: string, authorPublicKey: string) {
   return apiRequest<RoamingCapabilityResponse>(
     '/sync/roaming/capability',
     {
       method: 'POST',
-      body: JSON.stringify({ boardId }),
+      body: JSON.stringify({ boardId, authorPublicKey }),
     },
   );
 }

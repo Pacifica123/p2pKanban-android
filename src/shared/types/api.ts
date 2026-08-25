@@ -36,6 +36,8 @@ export interface Workspace {
   visibility: 'private' | 'shared';
   ownerUserId: string;
   memberCount?: number;
+  currentUserRole?: 'owner' | 'member' | 'guest' | null;
+  accessEpoch?: number;
   isArchived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -45,6 +47,50 @@ export interface Workspace {
 export interface WorkspaceListResponse {
   items: Workspace[];
   pageInfo: PageInfo;
+}
+
+export type WorkspaceRole = 'owner' | 'member' | 'guest';
+
+export interface WorkspaceMember {
+  id: string;
+  workspaceId: string;
+  userId: string;
+  displayName: string;
+  email: string;
+  role: WorkspaceRole;
+  status: 'active' | 'removed';
+  invitedByUserId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  removedAt?: string | null;
+}
+
+export interface WorkspaceMembersListResponse {
+  items: WorkspaceMember[];
+  pageInfo: PageInfo;
+}
+
+export interface WorkspaceInvitation {
+  id: string;
+  workspaceId: string;
+  role: 'member' | 'guest';
+  status: 'active' | 'accepted' | 'revoked' | 'expired';
+  createdByUserId: string;
+  expiresAt: string;
+  createdAt: string;
+  revokedAt?: string | null;
+  acceptedAt?: string | null;
+  acceptedByUserId?: string | null;
+}
+
+export interface WorkspaceInvitationsListResponse {
+  items: WorkspaceInvitation[];
+  pageInfo: PageInfo;
+}
+
+export interface CreatedWorkspaceInvitationResponse {
+  invitation: WorkspaceInvitation;
+  token: string;
 }
 
 export interface Board {
@@ -218,6 +264,9 @@ export interface RoamingCapabilityResponse {
   boardId: string;
   boardTag: string;
   boardKey: string;
+  capabilityEpoch: number;
+  canWrite: boolean;
+  writerPublicKeys: string[];
   relays: string[];
   eventKind: number;
   minimumRelayAcks: number;

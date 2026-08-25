@@ -50,6 +50,9 @@ function validateCapability(capability: RoamingCapability) {
   if (capability.relays.length < 2) {
     throw new Error('Для независимой доски нужны хотя бы два реле.');
   }
+  if (!Number.isInteger(capability.capabilityEpoch) || capability.capabilityEpoch < 1) {
+    throw new Error('Узел вернул некорректное поколение доступа к доске.');
+  }
   return key;
 }
 
@@ -63,7 +66,11 @@ async function identity() {
     `a${publicKey.slice(17, 20)}`,
     publicKey.slice(20, 32),
   ].join('-');
-  return { secretKey, replicaId };
+  return { secretKey, publicKey, replicaId };
+}
+
+export async function getRoamingAuthorPublicKey() {
+  return (await identity()).publicKey;
 }
 
 function fieldsFor(operation: LocalOperation) {
@@ -150,6 +157,7 @@ function eventForCard(input: {
       eventId: input.operation.id,
       workspaceId: input.capability.workspaceId,
       boardId: input.capability.boardId,
+      capabilityEpoch: input.capability.capabilityEpoch,
       replicaId: input.replicaId,
       replicaSeq: input.replicaSeq,
       logicalClock: input.logicalClock,
@@ -167,6 +175,7 @@ function eventForCard(input: {
     eventId: input.operation.id,
     workspaceId: input.capability.workspaceId,
     boardId: input.capability.boardId,
+    capabilityEpoch: input.capability.capabilityEpoch,
     replicaId: input.replicaId,
     replicaSeq: input.replicaSeq,
     logicalClock: input.logicalClock,
@@ -224,6 +233,9 @@ export async function publishBoardSnapshot(
   capability: RoamingCapability,
   snapshot: LocalBoardSnapshot,
 ) {
+  if (!capability.canWrite) {
+    throw new Error('Гостевой доступ не разрешает публиковать снимок доски.');
+  }
   const { replicaId } = await identity();
   const timestamp = Date.now();
   return publishEvent(capability, {
@@ -231,6 +243,7 @@ export async function publishBoardSnapshot(
     eventId: Crypto.randomUUID(),
     workspaceId: capability.workspaceId,
     boardId: capability.boardId,
+    capabilityEpoch: capability.capabilityEpoch,
     replicaId,
     replicaSeq: timestamp,
     logicalClock: timestamp,
@@ -248,6 +261,9 @@ export async function publishLocalOperation(
   operation: LocalOperation,
   snapshot: LocalBoardSnapshot,
 ) {
+  if (!capability.canWrite) {
+    throw new Error('Гостевой доступ не разрешает изменять доску.');
+  }
   if (operation.kind === 'board.appearance.update') {
     const { replicaId } = await identity();
     const logicalClock = operationSequence(operation);
@@ -256,6 +272,7 @@ export async function publishLocalOperation(
       eventId: operation.id,
       workspaceId: capability.workspaceId,
       boardId: capability.boardId,
+      capabilityEpoch: capability.capabilityEpoch,
       replicaId,
       replicaSeq: logicalClock,
       logicalClock,
@@ -298,10 +315,18 @@ export async function pullRoamingBoard(
   });
   const events = response.events.flatMap((nostr) => {
     try {
+      if (
+        (!capability.writerPublicKeys.length && capability.capabilityEpoch > 1)
+        || (
+          capability.writerPublicKeys.length > 0
+          && !capability.writerPublicKeys.includes(nostr.pubkey.toLowerCase())
+        )
+      ) return [];
       const event = openRoamingEvent(nostr.content, boardKey, capability.boardTag);
       if (
         event.workspaceId !== capability.workspaceId
         || event.boardId !== capability.boardId
+        || event.capabilityEpoch !== capability.capabilityEpoch
       ) return [];
       return [event];
     } catch {

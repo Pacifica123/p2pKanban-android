@@ -17,6 +17,7 @@ import { ConnectionScreen } from '../../features/connection/ConnectionScreen';
 import { SettingsScreen } from '../../features/settings/SettingsScreen';
 import { useAppearance } from '../../features/appearance/AppearanceProvider';
 import { WorkspacesScreen } from '../../features/workspaces/WorkspacesScreen';
+import { WorkspaceAccessScreen } from '../../features/workspaces/WorkspaceAccessScreen';
 import { Screen, StateView } from '../../shared/ui/primitives';
 import { useAppColors, useResolvedTheme } from '../theme';
 import type { RootStackParamList } from './types';
@@ -77,6 +78,7 @@ export function RootNavigator() {
         ) : (
           <>
             <Stack.Screen name="Workspaces" component={WorkspacesScreen} />
+            <Stack.Screen name="WorkspaceAccess" component={WorkspaceAccessScreen} />
             <Stack.Screen name="Boards" component={BoardsScreen} />
             <Stack.Screen name="Board" component={BoardScreen} />
             <Stack.Screen name="Activity" component={ActivityScreen} />

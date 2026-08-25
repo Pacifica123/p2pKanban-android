@@ -54,9 +54,11 @@ const priorityLabels: Record<Exclude<CardPriority, null>, string> = {
 function PriorityStars({
   value,
   onChange,
+  disabled = false,
 }: {
   value: CardPriority;
   onChange: (value: CardPriority) => void;
+  disabled?: boolean;
 }) {
   const colors = useAppColors();
   const selectedIndex = value ? priorityLevels.indexOf(value) : -1;
@@ -77,6 +79,7 @@ function PriorityStars({
             accessibilityRole="radio"
             accessibilityState={{ checked: value === level }}
             accessibilityLabel={`${priorityLabels[level]}, ${index + 1} из 4`}
+            disabled={disabled}
             onPress={() => onChange(value === level ? null : level)}
             hitSlop={4}
             style={({ pressed }) => [styles.starHit, { opacity: pressed ? 0.5 : 1 }]}
@@ -128,11 +131,13 @@ export function CardDetailsModal({
   card,
   columns,
   runtime,
+  readOnly = false,
   onClose,
 }: {
   card: Card | null;
   columns: BoardColumn[];
   runtime: LocalBoardRuntime;
+  readOnly?: boolean;
   onClose: () => void;
 }) {
   const colors = useAppColors();
@@ -523,10 +528,12 @@ export function CardDetailsModal({
 
   return (
     <FormModal visible={Boolean(card)} title="Карточка" onClose={onClose}>
-      <Field label="Название" value={title} onChangeText={setTitle} />
+      {readOnly ? <InlineNotice text="Гостевой доступ: карточка открыта только для чтения." tone="neutral" /> : null}
+      <Field label="Название" value={title} editable={!readOnly} onChangeText={setTitle} />
       <Field
         label="Описание"
         value={description}
+        editable={!readOnly}
         onChangeText={setDescription}
         multiline
         placeholder="Что нужно сделать"
@@ -539,7 +546,7 @@ export function CardDetailsModal({
             {columnName}
           </Text>
         </View>
-        <PriorityStars value={priority} onChange={setPriority} />
+        <PriorityStars value={priority} onChange={setPriority} disabled={readOnly} />
       </View>
 
       <View style={styles.section}>
@@ -623,10 +630,10 @@ export function CardDetailsModal({
               </View>
             ) : (
               <View style={styles.entityHeader}>
-                <Text style={[styles.checklistTitle, { color: colors.text }]}>
+                <Text style={[styles.checklistTitle, { color: colors.text }]}> 
                   {checklist.title}
                 </Text>
-                <SmallAction
+                {!readOnly ? <><SmallAction
                   label="✎"
                   onPress={() => setEditingChecklist({
                     id: checklist.id,
@@ -637,7 +644,7 @@ export function CardDetailsModal({
                   label="×"
                   danger
                   onPress={() => confirmDeleteChecklist(checklist.id, checklist.title)}
-                />
+                /></> : null}
               </View>
             )}
 
@@ -659,6 +666,7 @@ export function CardDetailsModal({
                   <Pressable
                     accessibilityRole="checkbox"
                     accessibilityState={{ checked: item.isDone }}
+                    disabled={readOnly}
                     onPress={() => void toggleItem(checklist.id, item.id, !item.isDone)}
                     style={({ pressed }) => [
                       styles.checklistItem,
@@ -690,7 +698,7 @@ export function CardDetailsModal({
                       {item.title}
                     </Text>
                   </Pressable>
-                  <SmallAction
+                  {!readOnly ? <><SmallAction
                     label="✎"
                     onPress={() => setEditingItem({
                       checklistId: checklist.id,
@@ -702,7 +710,7 @@ export function CardDetailsModal({
                     label="×"
                     danger
                     onPress={() => confirmDeleteItem(checklist.id, item.id, item.title)}
-                  />
+                  /></> : null}
                 </View>
               )
             ))}
@@ -711,7 +719,7 @@ export function CardDetailsModal({
                 В этом чек-листе пока нет пунктов
               </Text>
             ) : null}
-            <View style={styles.composerRow}>
+            {!readOnly ? <View style={styles.composerRow}>
               <View style={styles.composerField}>
                 <Field
                   label="Новый пункт"
@@ -730,10 +738,10 @@ export function CardDetailsModal({
                 disabled={!(newItemByChecklist[checklist.id] || '').trim()}
                 onPress={() => void createItem(checklist.id)}
               />
-            </View>
+            </View> : null}
           </View>
         ))}
-        <View style={styles.composerRow}>
+        {!readOnly ? <View style={styles.composerRow}>
           <View style={styles.composerField}>
             <Field
               label="Новый чек-лист"
@@ -749,7 +757,7 @@ export function CardDetailsModal({
             disabled={!newChecklistTitle.trim()}
             onPress={() => void createChecklist()}
           />
-        </View>
+        </View> : null}
       </View>
 
       <View style={styles.section}>
@@ -777,6 +785,7 @@ export function CardDetailsModal({
           ) : (
             <View key={label.id} style={styles.labelRow}>
               <Pressable
+                disabled={readOnly}
                 onPress={() => void toggleLabel(label.id)}
                 style={({ pressed }) => [
                   styles.labelChoice,
@@ -793,7 +802,7 @@ export function CardDetailsModal({
                   {selected ? 'выбрана' : 'не выбрана'}
                 </Text>
               </Pressable>
-              <SmallAction
+              {!readOnly ? <><SmallAction
                 label="Изм."
                 onPress={() => setEditingLabel({
                   id: label.id,
@@ -801,11 +810,11 @@ export function CardDetailsModal({
                   color: label.color,
                 })}
               />
-              <SmallAction label="×" danger onPress={() => confirmDeleteLabel(label)} />
+              <SmallAction label="×" danger onPress={() => confirmDeleteLabel(label)} /></> : null}
             </View>
           );
         })}
-        <View style={styles.inlineEditor}>
+        {!readOnly ? <View style={styles.inlineEditor}>
           <Field
             label="Новая метка"
             value={newLabelName}
@@ -825,7 +834,7 @@ export function CardDetailsModal({
             disabled={!newLabelName.trim() || !newLabelColor.trim()}
             onPress={() => void createLabel()}
           />
-        </View>
+        </View> : null}
       </View>
 
       <View style={styles.section}>
@@ -853,17 +862,17 @@ export function CardDetailsModal({
               ]}
             >
               <Text style={[styles.commentBody, { color: colors.text }]}>{comment.body}</Text>
-              <View style={styles.inlineActions}>
+              {!readOnly ? <View style={styles.inlineActions}>
                 <SmallAction
                   label="Изменить"
                   onPress={() => setEditingComment({ id: comment.id, body: comment.body })}
                 />
                 <SmallAction label="Удалить" danger onPress={() => confirmDeleteComment(comment)} />
-              </View>
+              </View> : null}
             </View>
           )
         ))}
-        <Field
+        {!readOnly ? <><Field
           label="Новый комментарий"
           value={newCommentBody}
           onChangeText={setNewCommentBody}
@@ -876,11 +885,11 @@ export function CardDetailsModal({
           variant="primary"
           disabled={!newCommentBody.trim()}
           onPress={() => void createCardComment()}
-        />
+        /></> : null}
       </View>
 
       {error ? <InlineNotice text={error} tone="danger" /> : null}
-      <Button
+      {!readOnly ? <><Button
         label="Сохранить карточку"
         variant="primary"
         loading={busyKey === 'card.save'}
@@ -891,7 +900,7 @@ export function CardDetailsModal({
         label={card?.isArchived ? 'Вернуть из архива' : 'Архивировать'}
         onPress={confirmArchive}
       />
-      <Button label="Убрать карточку…" variant="danger" onPress={confirmDelete} />
+      <Button label="Убрать карточку…" variant="danger" onPress={confirmDelete} /></> : null}
     </FormModal>
   );
 }

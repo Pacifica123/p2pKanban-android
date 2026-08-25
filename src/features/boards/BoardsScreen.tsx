@@ -36,7 +36,13 @@ import {
 type Props = NativeStackScreenProps<RootStackParamList, 'Boards'>;
 
 export function BoardsScreen({ navigation, route }: Props) {
-  const { workspaceId, workspaceName } = route.params;
+  const {
+    workspaceId,
+    workspaceName,
+    workspaceRole = 'member',
+    accessEpoch = 1,
+  } = route.params;
+  const canEdit = workspaceRole === 'owner' || workspaceRole === 'member';
   const colors = useAppColors();
   const { isOnline } = useNetwork();
   const queryClient = useQueryClient();
@@ -100,6 +106,7 @@ export function BoardsScreen({ navigation, route }: Props) {
   const boardIds = items.map((board) => board.id).join('|');
 
   function openCreate() {
+    if (!canEdit) return;
     setEditingBoard(null);
     setName('');
     setDescription('');
@@ -108,6 +115,7 @@ export function BoardsScreen({ navigation, route }: Props) {
   }
 
   function openActions(board: Board) {
+    if (!canEdit) return;
     Alert.alert(board.name, 'Выберите действие с доской.', [
       { text: 'Отмена', style: 'cancel' },
       {
@@ -161,8 +169,19 @@ export function BoardsScreen({ navigation, route }: Props) {
     <Screen scroll contentStyle={styles.screen}>
       <ScreenHeader
         title={workspaceName}
-        subtitle="Доски"
+        subtitle={workspaceRole === 'guest' ? 'Доски · только чтение' : 'Доски'}
         onBack={() => navigation.goBack()}
+        action={(
+          <Button
+            label="Доступ"
+            compact
+            variant="ghost"
+            onPress={() => navigation.navigate('WorkspaceAccess', {
+              workspaceId,
+              workspaceName,
+            })}
+          />
+        )}
       />
 
       {!isOnline ? (
@@ -185,13 +204,13 @@ export function BoardsScreen({ navigation, route }: Props) {
         <Text style={[styles.summary, { color: colors.muted }]}>
           {formatCountRu(items.length, 'доска', 'доски', 'досок')}
         </Text>
-        <Button
+        {canEdit ? <Button
           label="Создать"
           compact
           variant="primary"
           disabled={!isOnline}
           onPress={openCreate}
-        />
+        /> : null}
       </View>
 
       {query.isPending && !items.length ? <StateView title="Загружаем доски" busy /> : null}
@@ -210,7 +229,7 @@ export function BoardsScreen({ navigation, route }: Props) {
           description={isOnline
             ? 'Создайте первую доску в этом пространстве.'
             : 'После подключения здесь появятся сохранённые доски.'}
-          action={isOnline
+          action={isOnline && canEdit
             ? <Button label="Создать доску" variant="primary" onPress={openCreate} />
             : undefined}
         />
@@ -220,11 +239,13 @@ export function BoardsScreen({ navigation, route }: Props) {
         {items.map((board) => (
           <Pressable
             key={board.id}
-            onLongPress={() => openActions(board)}
+            onLongPress={canEdit ? () => openActions(board) : undefined}
             onPress={() => navigation.navigate('Board', {
               workspaceId,
               boardId: board.id,
               boardName: board.name,
+              workspaceRole,
+              accessEpoch,
             })}
             style={({ pressed }) => [
               styles.row,
@@ -241,7 +262,11 @@ export function BoardsScreen({ navigation, route }: Props) {
                 {board.description || 'Без описания'}
               </Text>
               <Text style={[styles.rowHint, { color: colors.muted }]}>
-                {board.isArchived ? 'В архиве · удерживайте для действий' : 'Удерживайте для изменения, архива или удаления'}
+                {workspaceRole === 'guest'
+                  ? 'Только чтение'
+                  : board.isArchived
+                    ? 'В архиве · удерживайте для действий'
+                    : 'Удерживайте для изменения, архива или удаления'}
               </Text>
             </View>
             <Text style={[styles.chevron, { color: colors.muted }]}>›</Text>

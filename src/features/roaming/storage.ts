@@ -51,7 +51,14 @@ export async function loadRoamingCapability(boardId: string) {
   ]);
   if (!raw || !boardKey) return null;
   try {
-    return { ...JSON.parse(raw), boardKey } as RoamingCapability;
+    const metadata = JSON.parse(raw) as Partial<RoamingCapability>;
+    return {
+      ...metadata,
+      capabilityEpoch: metadata.capabilityEpoch || 1,
+      canWrite: metadata.canWrite ?? true,
+      writerPublicKeys: metadata.writerPublicKeys || [],
+      boardKey,
+    } as RoamingCapability;
   } catch {
     return null;
   }
@@ -65,6 +72,10 @@ export async function loadRoamingApplyState(boardId: string) {
   } catch {
     return EMPTY_ROAMING_APPLY_STATE;
   }
+}
+
+export async function resetRoamingApplyState(boardId: string) {
+  await AsyncStorage.removeItem(applyStateKey(boardId));
 }
 
 export async function saveRoamingApplyState(boardId: string, state: RoamingApplyState) {

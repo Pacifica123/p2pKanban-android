@@ -8,7 +8,7 @@ import type {
   UpdateBoardAppearanceRequest,
 } from '../../shared/types/api';
 
-export const LOCAL_SCHEMA_VERSION = 5;
+export const LOCAL_SCHEMA_VERSION = 6;
 
 export interface LocalBoardSnapshot {
   schemaVersion: typeof LOCAL_SCHEMA_VERSION;
@@ -27,7 +27,8 @@ interface OperationBase {
   id: string;
   boardId: string;
   entityId: string;
-  status: 'pending' | 'failed';
+  status: 'pending' | 'relay_pending' | 'failed';
+  accessEpoch?: number;
   createdAt: string;
   attempts: number;
   lastError: string | null;

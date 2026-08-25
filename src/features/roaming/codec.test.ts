@@ -13,6 +13,7 @@ function event(): RoamingBoardEvent {
     eventId: '018f22e2-1d58-7f08-9a36-1f96bd9854b1',
     workspaceId,
     boardId,
+    capabilityEpoch: 1,
     replicaId: '018f22e2-29cc-7ad6-aa57-b61d74a14e52',
     replicaSeq: 1,
     logicalClock: 7,

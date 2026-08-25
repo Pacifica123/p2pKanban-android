@@ -106,8 +106,16 @@ export function WorkspacesScreen({ navigation }: Props) {
   }
 
   function openActions(workspace: Workspace) {
+    if (workspace.currentUserRole !== 'owner') return;
     Alert.alert(workspace.name, 'Выберите действие с пространством.', [
       { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Доступ и приглашения',
+        onPress: () => navigation.navigate('WorkspaceAccess', {
+          workspaceId: workspace.id,
+          workspaceName: workspace.name,
+        }),
+      },
       {
         text: 'Изменить',
         onPress: () => {
@@ -206,10 +214,14 @@ export function WorkspacesScreen({ navigation }: Props) {
         {items.map((workspace) => (
           <Pressable
             key={workspace.id}
-            onLongPress={() => openActions(workspace)}
+            onLongPress={workspace.currentUserRole === 'owner'
+              ? () => openActions(workspace)
+              : undefined}
             onPress={() => navigation.navigate('Boards', {
               workspaceId: workspace.id,
               workspaceName: workspace.name,
+              workspaceRole: workspace.currentUserRole || 'guest',
+              accessEpoch: workspace.accessEpoch || 1,
             })}
             style={({ pressed }) => [
               styles.row,
@@ -225,10 +237,14 @@ export function WorkspacesScreen({ navigation }: Props) {
               <Text style={[styles.rowDescription, { color: colors.muted }]} numberOfLines={2}>
                 {workspace.description || (workspace.visibility === 'private' ? 'Личное пространство' : 'Общее пространство')}
               </Text>
-              <Text style={[styles.rowHint, { color: colors.muted }]}>
-                {workspace.isArchived
-                  ? 'В архиве · удерживайте для действий'
-                  : 'Удерживайте для изменения, архива или удаления'}
+              <Text style={[styles.rowHint, { color: colors.muted }]}> 
+                {workspace.currentUserRole === 'owner'
+                  ? (workspace.isArchived
+                    ? 'Владелец · в архиве · удерживайте для действий'
+                    : 'Владелец · удерживайте для управления')
+                  : workspace.currentUserRole === 'member'
+                    ? 'Участник · можно изменять доски'
+                    : 'Гость · только чтение'}
               </Text>
             </View>
             <Text style={[styles.chevron, { color: colors.muted }]}>›</Text>

@@ -51,6 +51,7 @@ function event(logicalClock: number, replicaId: string, title: string): RoamingB
     eventId: `018f22e2-1d58-7f08-9a36-${replicaId.endsWith('b') ? '1' : '0'}${String(logicalClock).padStart(11, '0')}`,
     workspaceId,
     boardId,
+    capabilityEpoch: 1,
     replicaId,
     replicaSeq: logicalClock,
     logicalClock,

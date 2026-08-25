@@ -7,6 +7,7 @@ import {
 import { fetchBoardSnapshot } from '../localFirst/snapshot';
 import {
   installRoamingCapability,
+  getRoamingAuthorPublicKey,
   loadRoamingCapability,
   publishBoardSnapshot,
 } from './service';
@@ -23,16 +24,21 @@ async function primeBoard(workspaceId: string, board: Board) {
     loadBoardSnapshot(board.id),
     loadRoamingCapability(board.id),
   ]);
-  if (local?.checklistsHydratedAt && storedCapability) return 'ready' as const;
+  const authorPublicKey = await getRoamingAuthorPublicKey();
+  const provisioned = await provisionRoamingBoard(board.id, authorPublicKey);
+  const capability = storedCapability?.capabilityEpoch === provisioned.capabilityEpoch
+    && storedCapability.boardTag === provisioned.boardTag
+    ? { ...provisioned, boardKey: storedCapability.boardKey }
+    : provisioned;
+  await installRoamingCapability(capability);
+  if (local?.checklistsHydratedAt) return 'ready' as const;
 
   const [snapshot, operations] = await Promise.all([
     fetchBoardSnapshot(board.id, workspaceId),
     loadOperationQueue(),
   ]);
   const merged = await persistServerSnapshot(snapshot, operations);
-  const capability = storedCapability || await provisionRoamingBoard(board.id);
-  if (!storedCapability) await installRoamingCapability(capability);
-  await publishBoardSnapshot(capability, merged);
+  if (capability.canWrite) await publishBoardSnapshot(capability, merged);
   return 'prepared' as const;
 }
 

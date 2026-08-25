@@ -47,13 +47,21 @@ function stripRemovedCardInput(value: Record<string, unknown>) {
 function migrateOperation(
   operation: LocalOperation & { payload: Record<string, unknown> },
 ): LocalOperation | null {
+  const migratedBase = {
+    ...operation,
+    accessEpoch: typeof operation.accessEpoch === 'number'
+      && Number.isInteger(operation.accessEpoch)
+      && operation.accessEpoch > 0
+      ? operation.accessEpoch
+      : 1,
+  };
   if (operation.kind === 'card.create') {
     const payload = operation.payload as unknown as {
       input: Record<string, unknown>;
       tempCard: Card & { status?: unknown; completedAt?: unknown };
     };
     return {
-      ...operation,
+      ...migratedBase,
       payload: {
         input: stripRemovedCardInput(payload.input),
         tempCard: stripRemovedCardState(payload.tempCard),
@@ -64,9 +72,9 @@ function migrateOperation(
     const payload = operation.payload as unknown as { input: Record<string, unknown> };
     const input = stripRemovedCardInput(payload.input);
     if (!Object.keys(input).length) return null;
-    return { ...operation, payload: { input } } as LocalOperation;
+    return { ...migratedBase, payload: { input } } as LocalOperation;
   }
-  return operation as LocalOperation;
+  return migratedBase as LocalOperation;
 }
 
 export async function loadBoardSnapshot(boardId: string) {
@@ -81,7 +89,7 @@ export async function loadBoardSnapshot(boardId: string) {
     checklistsHydratedAt?: string | null;
   }) | null>(raw, null);
   if (!snapshot || !snapshot.board?.id) return null;
-  if (![1, 2, 3, 4, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
+  if (![1, 2, 3, 4, 5, LOCAL_SCHEMA_VERSION].includes(snapshot.schemaVersion)) return null;
   const migrated: LocalBoardSnapshot = {
     ...snapshot,
     schemaVersion: LOCAL_SCHEMA_VERSION,
