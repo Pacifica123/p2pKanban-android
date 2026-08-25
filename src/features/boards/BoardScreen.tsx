@@ -1,7 +1,9 @@
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  BackHandler,
   PanResponder,
   Pressable,
   ScrollView,
@@ -50,6 +52,7 @@ import {
   getDropColumnIndex,
   getEdgeScrollOffset,
 } from './cardDrag';
+import { createBoardExitController } from './boardExit';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Board'>;
 
@@ -228,6 +231,11 @@ export function BoardScreen({ navigation, route }: Props) {
   const { width, height } = useWindowDimensions();
   const { isOnline } = useNetwork();
   const runtime = useLocalBoard(boardId, workspaceId);
+  const exitController = useMemo(
+    () => createBoardExitController(() => navigation.pop()),
+    [navigation],
+  );
+  const leaveBoard = useCallback(() => exitController.leave(), [exitController]);
   const columnsScrollRef = useRef<ScrollView>(null);
   const scrollOffsetRef = useRef(0);
   const lastEdgeScrollAtRef = useRef(0);
@@ -254,6 +262,12 @@ export function BoardScreen({ navigation, route }: Props) {
   const [appearanceBusy, setAppearanceBusy] = useState(false);
   const [appearanceError, setAppearanceError] = useState<string | null>(null);
   const [dragState, setDragState] = useState<typeof dragRef.current>(null);
+
+  useFocusEffect(useCallback(() => {
+    exitController.reset();
+    const subscription = BackHandler.addEventListener('hardwareBackPress', leaveBoard);
+    return () => subscription.remove();
+  }, [exitController, leaveBoard]));
 
   const snapshot = runtime.snapshot;
   const appearance = snapshot?.appearance || defaultBoardAppearance(boardId);
@@ -521,7 +535,7 @@ export function BoardScreen({ navigation, route }: Props) {
   if (!runtime.hydrated && !snapshot) {
     return (
       <Screen>
-        <ScreenHeader title={boardName} onBack={() => navigation.goBack()} />
+        <ScreenHeader title={boardName} onBack={leaveBoard} />
         <StateView title="Открываем доску" busy />
       </Screen>
     );
@@ -530,7 +544,7 @@ export function BoardScreen({ navigation, route }: Props) {
   if (!snapshot) {
     return (
       <Screen>
-        <ScreenHeader title={boardName} onBack={() => navigation.goBack()} />
+        <ScreenHeader title={boardName} onBack={leaveBoard} />
         <StateView
           title="Доска не сохранена на устройстве"
           description={isOnline
@@ -555,7 +569,7 @@ export function BoardScreen({ navigation, route }: Props) {
         <ScreenHeader
           title={snapshot.board.name}
           subtitle={`${formatCountRu(columns.length, 'колонка', 'колонки', 'колонок')} · ${formatCountRu(displayedCards.length, 'карточка', 'карточки', 'карточек')}`}
-          onBack={() => navigation.goBack()}
+          onBack={leaveBoard}
           palette={boardPalette}
           action={(
             <Button

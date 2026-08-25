@@ -2,7 +2,7 @@
   "expo": {
     "name": "p2pKanban",
     "slug": "p2pkanban-mobile",
-    "version": "1.5.0-mobile.9",
+    "version": "1.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "scheme": "p2pkanban",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "dev.p2pkanban.mobile",
-      "versionCode": 9,
+      "versionCode": 10,
       "allowBackup": false,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -49,7 +49,7 @@
     ],
     "extra": {
       "appChannel": "mobile-mvp",
-      "clientVersion": "1.5.0-mobile.9",
+      "clientVersion": "1.0.0",
       "eas": {
         "projectId": "19e01039-73f2-4df3-ac5b-ebe8a587b807"
       }

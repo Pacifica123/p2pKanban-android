@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { InteractionManager } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
 import { ApiError, getApiNodeOrigin, isNetworkError } from '../../shared/api/client';
@@ -219,6 +220,9 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
   const flushLock = useRef(false);
   const storageChainRef = useRef<Promise<unknown>>(Promise.resolve());
   const nodeUnavailableUntilRef = useRef(0);
+  const initialSyncTaskRef = useRef<ReturnType<
+    typeof InteractionManager.runAfterInteractions
+  > | null>(null);
 
   const runSerialized = useCallback(<T>(task: () => Promise<T>) => {
     const run = storageChainRef.current.then(task, task);
@@ -564,15 +568,21 @@ export function useLocalBoard(boardId: string, workspaceId: string): LocalBoardR
       setHydrated(true);
       if (isOnline) {
         const hasPending = local.operations.some((operation) => operation.status === 'pending');
-        if (hasPending) {
-          void flush().then(refresh);
-        } else {
-          void refresh();
-        }
+        initialSyncTaskRef.current = InteractionManager.runAfterInteractions(() => {
+          initialSyncTaskRef.current = null;
+          if (!active) return;
+          if (hasPending) {
+            void flush().then(() => active ? refresh() : undefined);
+          } else {
+            void refresh();
+          }
+        });
       }
     });
     return () => {
       active = false;
+      initialSyncTaskRef.current?.cancel();
+      initialSyncTaskRef.current = null;
     };
   }, [applyState, boardId, flush, isOnline, refresh]);
 
