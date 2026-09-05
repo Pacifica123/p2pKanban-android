@@ -159,10 +159,24 @@ npm run apk
 dist/p2pKanban-1.0.0.apk
 ```
 
-Скрипт выполняет Expo prebuild, запускает Gradle `assembleRelease` и копирует
+Скрипт сначала проверяет установленный Expo, JDK и Android SDK Platform 36,
+затем выполняет Expo prebuild, запускает Gradle `assembleRelease` и копирует
 результат в стабильное место. Тестовая release-сборка подписывается стандартным
 debug keystore нативного шаблона; для Google Play нужен отдельный production
 keystore и AAB.
+
+На Windows Expo запускается через текущий `node.exe`, а Gradle batch — через
+`cmd.exe`; `npx.cmd` не используется. Пути с пробелами и кириллицей передаются
+как отдельные аргументы. Проверка сборщика без Android SDK:
+
+```bash
+node --test scripts/apk-commands.test.mjs
+```
+
+`prebuild --clean` пересоздаёт `android/`, как и раньше: ручные native-правки
+нужно переносить в Expo config/plugins до сборки. Если проблемы относятся к
+самому узлу на компьютере, диагностика выполняется в **web-проекте** командой
+`python bootstrap.py doctor`; установка APK не исправляет backend-миграции.
 
 Самообновление APK напрямую из ветки GitHub намеренно не включено. Android не
 может безопасно собрать и незаметно заменить собственный APK из исходников:
