@@ -1,3 +1,5 @@
+import {orderCards} from '../../shared/lib/cardOrder';
+import {getAdjacentPosition} from './cardDrag';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -113,7 +115,7 @@ function CardPreview({
   palette,
   operationState,
   draggable,
-  onPress,
+  onPress, onMoveUp, onMoveDown,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -124,6 +126,7 @@ function CardPreview({
   palette: BoardPalette;
   operationState: 'pending' | 'failed' | null;
   draggable: boolean;
+  onMoveUp?:()=>void;onMoveDown?:()=>void;
   onPress: () => void;
   onDragStart: (pageX: number, pageY: number) => void;
   onDragMove: (pageX: number, pageY: number) => void;
@@ -149,6 +152,7 @@ function CardPreview({
         },
       ]}
     >
+      {(onMoveUp||onMoveDown)&&<View style={{flexDirection:'row',justifyContent:'flex-end'}}><Button label="↑" accessibilityLabel={`Поднять ${card.title}`} compact disabled={!onMoveUp} onPress={()=>onMoveUp?.()}/><Button label="↓" accessibilityLabel={`Опустить ${card.title}`} compact disabled={!onMoveDown} onPress={()=>onMoveDown?.()}/></View>}
       <View style={styles.cardHeader}>
         <Pressable
           onPress={onPress}
@@ -236,6 +240,8 @@ export function BoardScreen({ navigation, route }: Props) {
     workspaceRole = 'member',
     accessEpoch = 1,
   } = route.params;
+  const [prioritySort,setPrioritySort]=useState<Record<string,boolean>>({});
+  const reorderBusy=useRef(false);
   const canEdit = workspaceRole === 'owner' || workspaceRole === 'member';
   const colors = useAppColors();
   const resolvedTheme = useResolvedTheme();
@@ -344,7 +350,7 @@ export function BoardScreen({ navigation, route }: Props) {
     try {
       await runtime.createCard({
         title: newCardTitle.trim(),
-        description: newCardDescription.trim() || undefined,
+        description: newCardDescription || undefined,
         columnId: createCardColumnId,
       });
       setCreateCardColumnId(null);
@@ -442,6 +448,11 @@ export function BoardScreen({ navigation, route }: Props) {
     ]);
   }
 
+  async function moveAdjacent(card:Card,direction:-1|1){
+    if(!canEdit||prioritySort[card.columnId]||reorderBusy.current)return;
+    try{reorderBusy.current=true;const position=getAdjacentPosition(runtime.snapshot?.cards||[],card.id,direction);if(position!==null)await runtime.moveCard(card.id,card.columnId,position);}
+    catch(error){setFormError(error instanceof Error?error.message:'Не удалось изменить порядок.');}finally{reorderBusy.current=false;}
+  }
   function updateDragState(next: typeof dragRef.current) {
     dragRef.current = next;
     setDragState(next);
@@ -497,7 +508,7 @@ export function BoardScreen({ navigation, route }: Props) {
   }
 
   function startDrag(card: Card, pageX: number, pageY: number) {
-    if (!canEdit) return;
+    if (!canEdit || prioritySort[card.columnId]) return;
     updateDragState({
       cardId: card.id,
       sourceColumnId: card.columnId,
@@ -510,7 +521,7 @@ export function BoardScreen({ navigation, route }: Props) {
   async function finishDrag() {
     const current = dragRef.current;
     updateDragState(null);
-    if (!canEdit || !current || current.targetColumnId === current.sourceColumnId) return;
+    if (!canEdit || !current || prioritySort[current.targetColumnId] || current.targetColumnId === current.sourceColumnId) return;
     const latestCards = runtime.snapshot?.cards || [];
     const position = getAppendPosition(
       latestCards,
@@ -685,9 +696,7 @@ export function BoardScreen({ navigation, route }: Props) {
           style={styles.columnsViewport}
         >
           {columns.map((column) => {
-            const cards = displayedCards
-              .filter((card) => card.columnId === column.id)
-              .sort((left, right) => left.position - right.position);
+            const cards=orderCards(displayedCards.filter(card=>card.columnId===column.id),Boolean(prioritySort[column.id]));
             const isDropTarget = dragState?.targetColumnId === column.id;
             return (
               <View
@@ -722,6 +731,7 @@ export function BoardScreen({ navigation, route }: Props) {
                     <Text style={[styles.columnMenuText, { color: boardPalette.muted }]}>•••</Text>
                   </Pressable> : null}
                 </View>
+                <Button compact label={prioritySort[column.id]?'★ Сначала важные · вернуть ручной':'☆ По приоритету'} onPress={()=>{updateDragState(null);setPrioritySort(current=>({...current,[column.id]:!current[column.id]}));}}/>
                 {canEdit ? <Button
                   label="Добавить карточку"
                   compact
@@ -737,14 +747,14 @@ export function BoardScreen({ navigation, route }: Props) {
                   nestedScrollEnabled
                   showsVerticalScrollIndicator={false}
                 >
-                  {cards.map((card) => (
+                  {cards.map((card,index) => (
                     <CardPreview
                       key={card.id}
                       card={card}
                       appearance={appearance}
                       palette={boardPalette}
                       operationState={runtime.cardOperationState(card.id)}
-                      draggable={canEdit}
+                      draggable={canEdit&&!prioritySort[column.id]} onMoveUp={canEdit&&!prioritySort[column.id]&&index>0?()=>{void moveAdjacent(card,-1);}:undefined} onMoveDown={canEdit&&!prioritySort[column.id]&&index<cards.length-1?()=>{void moveAdjacent(card,1);}:undefined}
                       onPress={() => setSelectedCardId(card.id)}
                       onDragStart={(pageX, pageY) => startDrag(card, pageX, pageY)}
                       onDragMove={moveDrag}

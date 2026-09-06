@@ -27,11 +27,11 @@ const packageJson = JSON.parse(read('package.json'));
 const packageLock = JSON.parse(read('package-lock.json'));
 const appJson = JSON.parse(read('app.json'));
 if (
-  packageJson.version !== '1.0.0'
+  packageJson.version !== '2.0.0'
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
-  || appJson.expo.version !== '1.0.0'
-  || appJson.expo.android.versionCode !== 10
+  || appJson.expo.version !== packageJson.version
+  || appJson.expo.android.versionCode !== 20
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }

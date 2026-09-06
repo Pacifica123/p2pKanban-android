@@ -1,3 +1,4 @@
+import {DeviceLinkPanel} from '../deviceLink/DeviceLinkPanel';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
@@ -136,6 +137,7 @@ export function SettingsScreen({ navigation }: Props) {
   return (
     <Screen scroll>
       <ScreenHeader title="Настройки" onBack={() => navigation.goBack()} />
+      <DeviceLinkPanel/>
 
       {!isOnline ? (
         <InlineNotice

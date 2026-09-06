@@ -13,6 +13,8 @@ export interface RoamingCapability {
   capabilityEpoch: number;
   canWrite: boolean;
   writerPublicKeys: string[];
+  delegationRoots?:string[];
+  delegationChain?:import('nostr-tools/pure').Event[];
   relays: string[];
   eventKind: number;
   minimumRelayAcks: number;

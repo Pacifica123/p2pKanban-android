@@ -1,3 +1,4 @@
+import {verifyChain} from '../deviceLink/protocol';
 import * as Crypto from 'expo-crypto';
 import { getPublicKey, generateSecretKey } from 'nostr-tools/pure';
 
@@ -203,6 +204,7 @@ async function publishEvent(
 ): Promise<RoamingPublishResult> {
   const boardKey = validateCapability(capability);
   const { secretKey } = await identity();
+  if(capability.delegationChain?.length)event={...event,payload:{...event.payload,_deviceDelegation:capability.delegationChain}};
   const content = sealRoamingEvent(
     event,
     boardKey,
@@ -315,14 +317,11 @@ export async function pullRoamingBoard(
   });
   const events = response.events.flatMap((nostr) => {
     try {
-      if (
-        (!capability.writerPublicKeys.length && capability.capabilityEpoch > 1)
-        || (
-          capability.writerPublicKeys.length > 0
-          && !capability.writerPublicKeys.includes(nostr.pubkey.toLowerCase())
-        )
-      ) return [];
-      const event = openRoamingEvent(nostr.content, boardKey, capability.boardTag);
+      const event=openRoamingEvent(nostr.content,boardKey,capability.boardTag);
+      const knownWriter=capability.writerPublicKeys.includes(nostr.pubkey.toLowerCase());const proof=event.payload._deviceDelegation;
+      if(!knownWriter&&proof){const{root,grant}=verifyChain(proof as import('nostr-tools/pure').Event[],nostr.pubkey);
+       if(!capability.delegationRoots?.includes(root)||grant.boardId!==capability.boardId||grant.workspaceId!==capability.workspaceId||grant.epoch!==capability.capabilityEpoch)return [];
+      }else if(!knownWriter&&(capability.writerPublicKeys.length||capability.capabilityEpoch>1))return [];
       if (
         event.workspaceId !== capability.workspaceId
         || event.boardId !== capability.boardId

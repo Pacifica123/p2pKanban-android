@@ -70,3 +70,12 @@ export function moveCardPreview(
     ? { ...card, columnId: targetColumnId, position }
     : card);
 }
+
+export function getAdjacentPosition(cards:Card[],cardId:string,direction:-1|1):number|null {
+ const card=cards.find(c=>c.id===cardId);if(!card)return null;
+ const ordered=cards.filter(c=>c.columnId===card.columnId&&!c.isArchived).sort((a,b)=>a.position-b.position||a.id.localeCompare(b.id));
+ const from=ordered.findIndex(c=>c.id===cardId),to=from+direction;if(from<0||to<0||to>=ordered.length)return null;
+ const remaining=ordered.filter(c=>c.id!==cardId),before=remaining[to-1]?.position,after=remaining[to]?.position;
+ if(before===undefined)return (after??0)-1024;if(after===undefined)return before+1024;
+ const position=(before+after)/2;if(position<=before||position>=after)throw new Error('Позиции совпали: переставьте соседнюю карточку или выполните reorder на web.');return position;
+}

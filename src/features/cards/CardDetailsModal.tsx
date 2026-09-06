@@ -1,3 +1,5 @@
+import {MarkdownEditor} from '../../shared/markdown/MarkdownEditor';
+import {shareCardMarkdown,openCardInObsidian} from '../integrations/obsidian';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -233,7 +235,7 @@ export function CardDetailsModal({
     await run('card.save', async () => {
       await runtime.updateCard(card.id, {
         title: title.trim(),
-        description: description.trim() || null,
+        description: description || null,
         priority,
       });
       await updateCardReminderTitle(card.id, title.trim());
@@ -530,14 +532,11 @@ export function CardDetailsModal({
     <FormModal visible={Boolean(card)} title="Карточка" onClose={onClose}>
       {readOnly ? <InlineNotice text="Гостевой доступ: карточка открыта только для чтения." tone="neutral" /> : null}
       <Field label="Название" value={title} editable={!readOnly} onChangeText={setTitle} />
-      <Field
-        label="Описание"
-        value={description}
-        editable={!readOnly}
-        onChangeText={setDescription}
-        multiline
-        placeholder="Что нужно сделать"
-      />
+      <MarkdownEditor value={description} onChange={setDescription} readOnly={readOnly}/>
+      <View style={{flexDirection:'row',flexWrap:'wrap',gap:8}}>
+       <Button label="Поделиться .md" compact onPress={()=>{void run('export.markdown',async()=>{if(card)await shareCardMarkdown({...card,title,description});});}}/>
+       <Button label="В Obsidian" compact onPress={()=>{void run('export.obsidian',async()=>{if(card)await openCardInObsidian({...card,title,description});});}}/>
+      </View>
 
       <View style={styles.cardMetaBlock}>
         <View style={styles.columnIndicator}>
