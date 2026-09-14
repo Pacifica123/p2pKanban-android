@@ -14,7 +14,8 @@ const NetworkContext = createContext<NetworkContextValue>({
 });
 
 function connected(value: { isConnected: boolean | null; isInternetReachable: boolean | null }) {
-  return value.isConnected !== false && value.isInternetReachable !== false;
+  // Internet probes do not determine LAN or relay reachability.
+  return value.isConnected !== false;
 }
 
 export function NetworkProvider({ children }: PropsWithChildren) {

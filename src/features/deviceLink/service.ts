@@ -1,3 +1,4 @@
+import { fetchFromRelays } from '../roaming/nostrRelay';
 import {
   finalizeEvent,
   getPublicKey,
@@ -6,9 +7,10 @@ import {
 } from 'nostr-tools/pure';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { apiRequest } from '../../shared/api/client';
+import { apiRequest, isNetworkError } from '../../shared/api/client';
 import {
   readSessionJson,
+  sessionStorageKey,
   writeSessionJson,
 } from '../../shared/storage/storage';
 import {
@@ -32,9 +34,15 @@ import {
 } from './protocol';
 const CACHE = 'device-link/prepared';
 const secret = () => getOrCreateRoamingDeviceSecret(generateSecretKey);
-export async function prepareDeviceLink() {
+export async function prepareDeviceLink(options: { refresh?: boolean } = {}) {
+  const scope = sessionStorageKey(CACHE);
+  if (!options.refresh) {
+    const info = await preparationInfo().catch(() => null);
+    if (info) return info.exportedAt;
+  }
   const k = await secret();
-  const response = await apiRequest<Event>(
+  let response: Event;
+  try { response = await apiRequest<Event>(
     '/auth/device-link/prepare',
     {
       method: 'POST',
@@ -42,9 +50,18 @@ export async function prepareDeviceLink() {
     },
     { timeoutMs: 30000 },
   );
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    const info = await preparationInfo().catch(() => null);
+    throw new Error(info
+      ? 'ПК недоступен: обновление не выполнено. Сохранённое разрешение действует; можно проверить запрос ноутбука и разрешить подключение.'
+      : 'ПК недоступен и действующего разрешения нет. Получите его у доступного доверенного узла; мобильный интернет не делает LAN-адрес ПК доступным.');
+  }
   const data = decryptPack(k, response);
   for (const c of Object.values(data.chains))
     verifyChain(c as Event[], getPublicKey(k));
+  if (!Object.keys(data.chains).length) throw new Error('В разрешении нет досок.');
+  if (scope !== sessionStorageKey(CACHE)) throw new Error('Сессия изменилась; повторите подготовку.');
   await writeSessionJson(CACHE, response);
   return data.snapshot.exportedAt as string;
 }
@@ -56,6 +73,7 @@ export async function preparationInfo() {
     grants = Object.values(data.chains).map((c) =>
       verifyChain(c as Event[], getPublicKey(k)),
     );
+  if (!grants.length) return null;
   return {
     exportedAt: data.snapshot.exportedAt as string,
     boards: grants.length,
@@ -145,4 +163,20 @@ async function shareApproval(e: Event) {
     mimeType: 'application/json',
     dialogTitle: 'Передать зашифрованное разрешение ноутбуку',
   });
+}
+
+export async function probePreparedRelays() {
+  const cached = await readSessionJson<Event | null>(CACHE, null);
+  if (!cached) throw new Error('Нет подготовленного доступа. Получите его при доступном доверенном узле.');
+  const data = decryptPack(await secret(), cached);
+  const reports: string[] = [];
+  for (const boardId of Object.keys(data.chains)) {
+    const capability = await loadRoamingCapability(boardId);
+    if (!capability) { reports.push(`${boardId}: нет локальной relay-capability; откройте список досок при доступном ПК.`); continue; }
+    try {
+      const result = await fetchFromRelays({ relays: capability.relays, kind: capability.eventKind, boardTag: capability.boardTag });
+      reports.push(`${boardId}: ответили ${result.relayCount}/${capability.relays.length} relay; получено ${result.events.length} подписанных событий. Проверка чтения не подтверждает доставку изменений.`);
+    } catch (error) { reports.push(`${boardId}: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  return reports.join('\n') || 'В разрешении нет досок.';
 }

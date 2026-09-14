@@ -107,7 +107,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         await applyResponse(response, nodeOrigin);
         return response.accessToken;
       } catch (error) {
-        if (error instanceof ApiError && error.status === 0) {
+        if (!(error instanceof ApiError) || ![401, 403].includes(error.status)) {
           setOfflineSession(true);
           return null;
         }

@@ -8,6 +8,7 @@ import {
   deviceFingerprint,
   preparationInfo,
   prepareDeviceLink,
+  probePreparedRelays,
 } from './service';
 import { checkRequest } from './protocol';
 export function DeviceLinkPanel() {
@@ -78,18 +79,20 @@ export function DeviceLinkPanel() {
           <Text style={{ color: colors.text }}>
             Подготовьте доступ, пока исходный узел доступен. После этого
             владелец может подключить ноутбук без PC-node. На ноутбуке нужен
-            запущенный p2pKanban v2 с пустой базой.
+            запущенный p2pKanban v2. Для первого подключения нужна пустая база; для новых досок — режим дополнения. Если доступ уже подготовлен, сразу проверяйте запрос ниже, без обновления через ПК.
           </Text>
           <Button
-            label="Подготовить / обновить доступ"
+            label="Получить свежий доступ от ПК"
             disabled={busy}
             onPress={() => {
               void run(async () => {
-                await prepareDeviceLink();
+                await prepareDeviceLink({ refresh: true });
                 await refresh();
               });
             }}
           />
+          <Button label="Проверить relay без ПК" disabled={busy}
+            onPress={() => { void run(async () => { setStatus(await probePreparedRelays()); }); }} />
           <InlineNotice text={status} tone="neutral" />
           <Text selectable style={{ color: colors.text }}>
             Ключ этого устройства — сверьте на ноутбуке:\n{fingerprint}

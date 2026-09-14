@@ -301,7 +301,7 @@ export function useLocalBoard(
           }
         }
 
-        if (preferRoaming && relaySucceeded) return;
+        if (relaySucceeded && (preferRoaming || Date.now() < nodeUnavailableUntilRef.current)) return;
 
         try {
           await touchWorkspaceSync(workspaceId).catch(() => null);
@@ -357,7 +357,9 @@ export function useLocalBoard(
         }
       });
     } catch (error) {
-      setLastError(message(relayFailure || error));
+      setLastError(relayFailure
+        ? `Нет релейной связи: ${message(relayFailure)}. Прямой узел: ${message(error)}`
+        : `Прямой узел недоступен: ${message(error)}. Для relay нужна заранее подготовленная доска.`);
     } finally {
       setRefreshing(false);
     }

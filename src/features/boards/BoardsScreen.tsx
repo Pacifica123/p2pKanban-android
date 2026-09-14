@@ -1,3 +1,4 @@
+import { prepareDeviceLink } from '../deviceLink/service';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
@@ -44,7 +45,7 @@ export function BoardsScreen({ navigation, route }: Props) {
   } = route.params;
   const canEdit = workspaceRole === 'owner' || workspaceRole === 'member';
   const colors = useAppColors();
-  const { isOnline } = useNetwork();
+  const { isOnline, networkType } = useNetwork();
   const queryClient = useQueryClient();
   const [cached, setCached] = useState<Board[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -158,12 +159,15 @@ export function BoardsScreen({ navigation, route }: Props) {
     let active = true;
     setPrimeState({ status: 'running', result: null });
     void primeWorkspaceBoards(workspaceId, items).then((result) => {
-      if (active) setPrimeState({ status: 'done', result });
+      if (active) {
+        setPrimeState({ status: 'done', result });
+        if (workspaceRole === 'owner' && result.failed === 0) void prepareDeviceLink().catch(() => undefined);
+      }
     });
     return () => {
       active = false;
     };
-  }, [boardIds, isOnline, workspaceId]);
+  }, [boardIds, isOnline, networkType, workspaceId]);
 
   return (
     <Screen scroll contentStyle={styles.screen}>
@@ -184,6 +188,7 @@ export function BoardsScreen({ navigation, route }: Props) {
         )}
       />
 
+      {query.isError && items.length > 0 ? <InlineNotice text="Прямой узел недоступен. Открывайте сохранённые доски: relay-связь проверяется отдельно. Новые доски от ПК пока не получены." tone="warning" /> : null}
       {!isOnline ? (
         <InlineNotice text="Нет связи. Открываются только сохранённые доски." tone="warning" />
       ) : null}

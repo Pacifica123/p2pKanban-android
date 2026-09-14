@@ -26,6 +26,7 @@ function withRelay<T>(
     };
     const timer = setTimeout(() => fail(new Error(`Релей ${url} не ответил вовремя.`)), RELAY_TIMEOUT_MS);
     socket.onerror = () => fail(new Error(`Не удалось открыть ${url}.`));
+    socket.onclose = () => fail(new Error(`Релей ${url} закрыл соединение до ответа.`));
     socket.onopen = () => {
       try {
         run(socket, finish, fail);
@@ -127,6 +128,9 @@ export async function fetchFromRelays(input: {
     relayCount += 1;
     for (const event of result.value) eventsById.set(event.id, event);
   }
-  if (!relayCount) throw new Error('Ни один релей доски не ответил.');
+  if (!relayCount) {
+    const errors = settled.flatMap((r, i) => r.status === 'rejected' ? [`${input.relays[i]}: ${r.reason instanceof Error ? r.reason.message : 'ошибка WebSocket'}`] : []);
+    throw new Error(`Релейная связь недоступна. ${errors.join('; ')}`);
+  }
   return { events: [...eventsById.values()], relayCount };
 }

@@ -31,7 +31,7 @@ if (
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
   || appJson.expo.version !== packageJson.version
-  || appJson.expo.android.versionCode !== 20
+  || appJson.expo.android.versionCode !== 21
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }
