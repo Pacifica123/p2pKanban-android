@@ -84,27 +84,35 @@ async function performRequest<T>(
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, options.timeoutMs);
+  const abort = () => controller.abort();
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener('abort', abort, { once: true });
 
   let response: Response;
+  let payload: unknown;
   try {
     response = await fetch(`${nodeOrigin}/api/v1${path}`, {
       ...init,
       headers,
       signal: controller.signal,
     });
+    // Reading the body is part of the request deadline too (RN may cancel here).
+    payload = await parsePayload(response);
   } catch (error) {
-    const aborted = error instanceof Error && error.name === 'AbortError';
+    const aborted = controller.signal.aborted;
     throw new ApiError(
-      aborted ? 'Узел не ответил вовремя.' : `Не удалось связаться с узлом: ${errorMessage(error)}.`,
+      timedOut ? 'Узел не ответил вовремя.' : aborted ? 'Запрос отменён вызывающим экраном.' : `Не удалось связаться с узлом: ${errorMessage(error)}.`,
       {
         status: 0,
-        code: aborted ? 'TIMEOUT' : 'NETWORK_ERROR',
+        code: timedOut ? 'TIMEOUT' : aborted ? 'CANCELED' : 'NETWORK_ERROR',
         details: error,
       },
     );
   } finally {
     clearTimeout(timeout);
+    init.signal?.removeEventListener('abort', abort);
   }
 
   if (response.status === 401 && !options.skipRefresh && refreshHandler) {
@@ -118,7 +126,6 @@ async function performRequest<T>(
     }
   }
 
-  const payload = await parsePayload(response);
   if (!response.ok) {
     const apiError = (payload as ErrorEnvelope | null)?.error;
     throw new ApiError(apiError?.message || `Узел вернул HTTP ${response.status}.`, {

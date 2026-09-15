@@ -1,4 +1,4 @@
-import {verifyChain} from '../deviceLink/protocol';
+import {verifyReplicationChain} from '../deviceLink/protocol';
 import * as Crypto from 'expo-crypto';
 import { getPublicKey, generateSecretKey } from 'nostr-tools/pure';
 
@@ -15,7 +15,7 @@ import {
   openRoamingEvent,
   sealRoamingEvent,
 } from './codec';
-import { applyRoamingEvents } from './merge';
+import { loadJournal, mergeJournal, projectJournal, saveJournal, serializeReplica } from './journal';
 import {
   createSignedNostrEvent,
   fetchFromRelays,
@@ -23,9 +23,7 @@ import {
 } from './nostrRelay';
 import {
   getOrCreateRoamingDeviceSecret,
-  loadRoamingApplyState,
   loadRoamingCapability,
-  saveRoamingApplyState,
   saveRoamingCapability,
 } from './storage';
 import {
@@ -54,6 +52,8 @@ function validateCapability(capability: RoamingCapability) {
   if (!Number.isInteger(capability.capabilityEpoch) || capability.capabilityEpoch < 1) {
     throw new Error('Узел вернул некорректное поколение доступа к доске.');
   }
+  if (!Number.isInteger(capability.minimumRelayAcks) || capability.minimumRelayAcks < 1
+    || capability.minimumRelayAcks > capability.relays.length) throw new Error('Некорректное число подтверждений relay.');
   return key;
 }
 
@@ -192,30 +192,24 @@ function eventForCard(input: {
   };
 }
 
-function operationSequence(operation: LocalOperation) {
-  const milliseconds = Math.max(Date.parse(operation.createdAt), 1);
-  const suffix = Number.parseInt(operation.id.replace(/-/g, '').slice(-3), 16) || 0;
-  return (milliseconds * 1000) + suffix;
-}
-
-async function publishEvent(
+export async function publishEvent(
   capability: RoamingCapability,
   event: RoamingBoardEvent,
 ): Promise<RoamingPublishResult> {
   const boardKey = validateCapability(capability);
   const { secretKey } = await identity();
   if(capability.delegationChain?.length)event={...event,payload:{...event.payload,_deviceDelegation:capability.delegationChain}};
-  const content = sealRoamingEvent(
-    event,
-    boardKey,
-    capability.boardTag,
-    Crypto.getRandomBytes(24),
-  );
-  const nostr = createSignedNostrEvent({
-    secretKey,
-    kind: capability.eventKind,
-    boardTag: capability.boardTag,
-    content,
+  const nostr = await serializeReplica(async () => {
+    const journal = await loadJournal(capability, null);
+    if (journal.wire?.[event.eventId]) return journal.wire[event.eventId]!;
+    const wire = createSignedNostrEvent({secretKey, kind: capability.eventKind,
+      boardTag: capability.boardTag,
+      content: sealRoamingEvent(event, boardKey, capability.boardTag, Crypto.getRandomBytes(24))});
+    if (journal.events.some(item => item.eventId === event.eventId)) {
+      journal.wire = {...journal.wire, [event.eventId]: wire};
+      await saveJournal(capability.boardId, journal);
+    }
+    return wire;
   });
   const result = await publishToRelays(
     capability.relays,
@@ -240,7 +234,7 @@ export async function publishBoardSnapshot(
   }
   const { replicaId } = await identity();
   const timestamp = Date.now();
-  return publishEvent(capability, {
+  const event: RoamingBoardEvent = {
     protocolVersion: ROAMING_PROTOCOL_VERSION,
     eventId: Crypto.randomUUID(),
     workspaceId: capability.workspaceId,
@@ -255,21 +249,35 @@ export async function publishBoardSnapshot(
     fieldMask: ['*'],
     payload: { snapshot },
     occurredAt: new Date(timestamp).toISOString(),
+  };
+  await serializeReplica(async () => {
+    let journal = await loadJournal(capability, snapshot);
+    event.payload.fieldVersions = projectJournal(journal).state.fieldVersions;
+    journal = mergeJournal(journal, [event]);
+    journal.pending.push(event.eventId);
+    await saveJournal(capability.boardId, journal);
   });
+  const result = await publishEvent(capability, event);
+  await serializeReplica(async () => {
+    const journal = await loadJournal(capability, snapshot);
+    journal.pending = journal.pending.filter(id => id !== event.eventId);
+    await saveJournal(capability.boardId, journal);
+  });
+  return result;
 }
 
-export async function publishLocalOperation(
+async function buildLocalOperation(
   capability: RoamingCapability,
   operation: LocalOperation,
   snapshot: LocalBoardSnapshot,
-) {
+  logicalClock: number,
+): Promise<RoamingBoardEvent> {
   if (!capability.canWrite) {
     throw new Error('Гостевой доступ не разрешает изменять доску.');
   }
   if (operation.kind === 'board.appearance.update') {
     const { replicaId } = await identity();
-    const logicalClock = operationSequence(operation);
-    return publishEvent(capability, {
+    return {
       protocolVersion: ROAMING_PROTOCOL_VERSION,
       eventId: operation.id,
       workspaceId: capability.workspaceId,
@@ -284,7 +292,7 @@ export async function publishLocalOperation(
       fieldMask: fieldsFor(operation),
       payload: { appearance: operation.payload.optimistic },
       occurredAt: operation.createdAt,
-    });
+    };
   }
   const cardId = operationCardId(operation);
   const card = operation.kind === 'card.delete'
@@ -292,8 +300,7 @@ export async function publishLocalOperation(
     : snapshot.cards.find((candidate) => candidate.id === cardId);
   if (!card) throw new Error('Локальная карточка для события не найдена.');
   const { replicaId } = await identity();
-  const logicalClock = operationSequence(operation);
-  return publishEvent(capability, eventForCard({
+  return eventForCard({
     capability,
     operation,
     card,
@@ -301,7 +308,70 @@ export async function publishLocalOperation(
     replicaId,
     replicaSeq: logicalClock,
     logicalClock,
-  }));
+  });
+}
+
+/** Commit locally before attempting transport. Same event and clock on every retry. */
+export async function commitLocalOperation(
+  capability: RoamingCapability,
+  operation: LocalOperation,
+  snapshot: LocalBoardSnapshot,
+  previousSnapshot: LocalBoardSnapshot = snapshot,
+  recoverLegacy = false,
+) {
+  return serializeReplica(async () => {
+    let journal = await loadJournal(capability, previousSnapshot);
+    const existing = journal.events.find(event => event.eventId === operation.id || event.payload._replacesLocalOperation === operation.id);
+    if (existing) return existing;
+    const logicalClock = Math.max(Date.now() * 1000, journal.clock + 1);
+    const event = await buildLocalOperation(capability, recoverLegacy ? {...operation,id:Crypto.randomUUID()} : operation, snapshot, logicalClock);
+    if (recoverLegacy) event.payload._replacesLocalOperation = operation.id;
+    journal = mergeJournal(journal, [event]);
+    journal.pending.push(event.eventId);
+    await saveJournal(capability.boardId, journal);
+    return event;
+  });
+}
+
+export async function publishLocalOperation(
+  capability: RoamingCapability, operation: LocalOperation, snapshot: LocalBoardSnapshot,
+) {
+  const event = await commitLocalOperation(capability, operation, snapshot);
+  const result = await publishEvent(capability, event);
+  await serializeReplica(async () => {
+    const journal = await loadJournal(capability, snapshot);
+    journal.pending = journal.pending.filter(id => id !== event.eventId);
+    await saveJournal(capability.boardId, journal);
+  });
+  return result;
+}
+
+export async function recoverLocalReplica(capability: RoamingCapability, snapshot: LocalBoardSnapshot | null) {
+  return serializeReplica(async () => projectJournal(await loadJournal(capability, snapshot)).snapshot);
+}
+
+export async function publishedOperationIds(capability: RoamingCapability) {
+  return serializeReplica(async () => {
+    const journal = await loadJournal(capability, null);
+    return new Set(journal.events.filter(event => !journal.pending.includes(event.eventId)).flatMap(event =>
+      [event.eventId, ...(typeof event.payload._replacesLocalOperation === 'string' ? [event.payload._replacesLocalOperation] : [])]));
+  });
+}
+
+// Journal delivery survives a crash between journal commit and UI queue update.
+export async function flushReplicaJournal(capability: RoamingCapability) {
+  const pending = await serializeReplica(async () => {
+    const journal = await loadJournal(capability, null);
+    return journal.events.filter(event => journal.pending.includes(event.eventId));
+  });
+  for (const event of pending) {
+    await publishEvent(capability, event);
+    await serializeReplica(async () => {
+      const journal = await loadJournal(capability, null);
+      journal.pending = journal.pending.filter(id => id !== event.eventId);
+      await saveJournal(capability.boardId, journal);
+    });
+  }
 }
 
 export async function pullRoamingBoard(
@@ -309,7 +379,6 @@ export async function pullRoamingBoard(
   currentSnapshot: LocalBoardSnapshot | null,
 ): Promise<RoamingPullResult> {
   const boardKey = validateCapability(capability);
-  const applyState = await loadRoamingApplyState(capability.boardId);
   const response = await fetchFromRelays({
     relays: capability.relays,
     kind: capability.eventKind,
@@ -317,34 +386,32 @@ export async function pullRoamingBoard(
   });
   const events = response.events.flatMap((nostr) => {
     try {
-      const event=openRoamingEvent(nostr.content,boardKey,capability.boardTag);
-      const knownWriter=capability.writerPublicKeys.includes(nostr.pubkey.toLowerCase());const proof=event.payload._deviceDelegation;
-      if(!knownWriter&&proof){const{root,grant}=verifyChain(proof as import('nostr-tools/pure').Event[],nostr.pubkey);
-       if(!capability.delegationRoots?.includes(root)||grant.boardId!==capability.boardId||grant.workspaceId!==capability.workspaceId||grant.epoch!==capability.capabilityEpoch)return [];
-      }else if(!knownWriter&&(capability.writerPublicKeys.length||capability.capabilityEpoch>1))return [];
-      if (
-        event.workspaceId !== capability.workspaceId
-        || event.boardId !== capability.boardId
-        || event.capabilityEpoch !== capability.capabilityEpoch
-      ) return [];
+      const event = openRoamingEvent(nostr.content, boardKey, capability.boardTag);
+      if (!Number.isSafeInteger(event.logicalClock) || event.logicalClock < 0) return [];
+      const knownWriter = capability.writerPublicKeys.includes(nostr.pubkey.toLowerCase());
+      const proof = event.payload._deviceDelegation;
+      if (!knownWriter && proof) {
+        // Validate authority at signing time: a peer may receive stored work later.
+        const {root, grant} = verifyReplicationChain(proof as import('nostr-tools/pure').Event[], nostr.pubkey, nostr.created_at);
+        if (!capability.delegationRoots?.includes(root) || grant.boardId !== capability.boardId
+          || grant.workspaceId !== capability.workspaceId || grant.epoch !== capability.capabilityEpoch) return [];
+      } else if (!knownWriter && (capability.writerPublicKeys.length || capability.capabilityEpoch > 1)) return [];
+      if (event.workspaceId !== capability.workspaceId || event.boardId !== capability.boardId
+        || event.capabilityEpoch !== capability.capabilityEpoch) return [];
       return [event];
-    } catch {
-      return [];
-    }
+    } catch { return []; }
   });
-  const merged = applyRoamingEvents(currentSnapshot, applyState, events);
-  const nextState = {
-    ...merged.state,
-    lastRelayPullAt: Math.floor(Date.now() / 1000),
-  };
-  await saveRoamingApplyState(capability.boardId, nextState);
-  return {
-    snapshot: merged.snapshot,
-    applyState: nextState,
-    received: events.length,
-    applied: merged.applied,
-    relayCount: response.relayCount,
-  };
+  return serializeReplica(async () => {
+    let journal = await loadJournal(capability, currentSnapshot);
+    journal = mergeJournal(journal, events);
+    const merged = projectJournal(journal);
+    await saveJournal(capability.boardId, journal);
+    return {
+      snapshot: merged.snapshot,
+      applyState: { ...merged.state, lastRelayPullAt: Math.floor(Date.now() / 1000) },
+      received: events.length, applied: merged.applied, relayCount: response.relayCount,
+    };
+  });
 }
 
 export { loadRoamingCapability };

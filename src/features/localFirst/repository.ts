@@ -132,3 +132,11 @@ export async function persistServerSnapshot(
   await persistBoardAndQueue(withPendingChanges, allOperations);
   return withPendingChanges;
 }
+
+// Screens and board preparation share one queue; serialize read-modify-write.
+let localWrites = Promise.resolve<unknown>(undefined);
+export function serializeLocalState<T>(task: () => Promise<T>): Promise<T> {
+  const run = localWrites.then(task, task);
+  localWrites = run.then(() => undefined, () => undefined);
+  return run;
+}

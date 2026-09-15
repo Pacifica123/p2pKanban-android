@@ -325,7 +325,13 @@ export function applyRoamingEvents(
   const checklistItemTombstones = { ...(currentState.checklistItemTombstones || {}) };
   let applied = 0;
 
-  const ordered = [...events].sort((left, right) => compareVersion(stampOf(left), stampOf(right)));
+  const byClock = [...events].sort((left, right) => compareVersion(stampOf(left), stampOf(right)));
+  // A transport may return deltas before the baseline (or in a later fetch).
+  // Bootstrap first; deltas retain their own clocks and still merge per field.
+  const ordered = !snapshot
+    ? [...byClock.filter(event => event.operation === 'board.snapshot'),
+       ...byClock.filter(event => event.operation !== 'board.snapshot')]
+    : byClock;
   for (const event of ordered) {
     if (seen.has(event.eventId)) continue;
     seen.add(event.eventId);
@@ -395,9 +401,23 @@ export function applyRoamingEvents(
             ),
             checklistsHydratedAt: candidate.checklistsHydratedAt || null,
           };
+          const sourceVersions = (event.payload.fieldVersions || {}) as Record<string, RoamingVersionStamp>;
           for (const card of snapshot.cards) {
-            for (const field of CARD_FIELDS) versions[fieldKey(card.id, field)] = stamp;
-            versions[fieldKey(card.id, CHECKLISTS_FIELD)] = stamp;
+            for (const field of [...CARD_FIELDS, CHECKLISTS_FIELD]) {
+              const key = fieldKey(card.id, field);
+              versions[key] = sourceVersions[key] || stamp;
+            }
+          }
+          const liveChecklists = Object.values(snapshot.checklistsByCardId).flat();
+          const liveItems = liveChecklists.flatMap(checklist => checklist.items);
+          for (const [key, version] of Object.entries(sourceVersions)) {
+            if (!version || !Number.isSafeInteger(version.logicalClock)) continue;
+            versions[key] = version;
+            const [entityId, field] = key.split(':');
+            if (!entityId) continue;
+            if (field === '__lifecycle' && !snapshot.cards.some(card => card.id === entityId)) tombstones[entityId] = version;
+            if (field === 'checklist.__lifecycle' && !liveChecklists.some(item => item.id === entityId)) checklistTombstones[entityId] = version;
+            if (field === 'checklist_item.__lifecycle' && !liveItems.some(item => item.id === entityId)) checklistItemTombstones[entityId] = version;
           }
           versions[fieldKey(snapshot.board.id, BOARD_APPEARANCE_FIELD)] = stamp;
           applied += 1;
@@ -419,7 +439,7 @@ export function applyRoamingEvents(
       continue;
     }
 
-    if (snapshot && event.payload.checklistDelta) {
+    if (snapshot && event.payload.checklistDelta && !tombstones[event.entityId]) {
       const result = applyChecklistDelta(
         snapshot,
         event,
@@ -432,7 +452,8 @@ export function applyRoamingEvents(
       continue;
     }
 
-    if (!snapshot || event.operation !== 'card.put' || tombstones[event.entityId]) continue;
+    if (!snapshot) { seen.delete(event.eventId); continue; }
+    if (event.operation !== 'card.put' || tombstones[event.entityId]) continue;
     const rawIncoming = event.payload.card as (Card & {
       status?: unknown;
       completedAt?: unknown;
@@ -463,7 +484,7 @@ export function applyRoamingEvents(
           : snapshot.checklistsByCardId,
         cachedAt: event.occurredAt,
       };
-      for (const field of CARD_FIELDS) versions[fieldKey(incoming.id, field)] = stamp;
+      for (const field of fields) versions[fieldKey(incoming.id, field)] = stamp;
       if (incomingChecklists) versions[fieldKey(incoming.id, CHECKLISTS_FIELD)] = stamp;
       applied += 1;
       continue;

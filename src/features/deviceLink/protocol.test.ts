@@ -4,6 +4,7 @@ import {
   GRANT_KIND,
   RESPONSE_KIND,
   verifyChain,
+  verifyReplicationChain,
   extendChain,
   encryptPack,
   decryptPack,
@@ -97,4 +98,11 @@ test('challenge expiry is bounded', () => {
         ),
       ),
     ).toThrow();
+});
+
+test('enrolled membership survives invitation expiry, while new delegation remains bounded', () => {
+  const chain = extendChain(b, [grant()], getPublicKey(c));
+  expect(() => verifyChain(chain,getPublicKey(c),now()+1000)).toThrow();
+  expect(verifyReplicationChain(chain,getPublicKey(c),now()+1000).root).toBe(getPublicKey(a));
+  expect(() => verifyReplicationChain(chain,getPublicKey(c),0)).toThrow();
 });

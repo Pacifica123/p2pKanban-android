@@ -36,6 +36,7 @@ export function verifyChain(chain: Event[], subject: string, at = now()) {
   for (let i = 0; i < chain.length; i++) {
     const g = checkEvent(chain[i]!, GRANT_KIND) as Grant;
     if (
+      chain[i]!.created_at > at ||
       g.protocol !== LINK_PROTOCOL ||
       !Number.isSafeInteger(g.epoch) ||
       g.epoch < 1 ||
@@ -63,6 +64,14 @@ export function verifyChain(chain: Event[], subject: string, at = now()) {
   if (previous!.subject !== subject)
     throw new Error('Право выдано другому устройству.');
   return { root: chain[0]!.pubkey, grant: previous! };
+}
+// A valid enrollment establishes membership for the capability epoch.
+// Invitation expiry still limits NEW delegation; it is not a recurring lease.
+export function verifyReplicationChain(chain: Event[], subject: string, signedAt: number) {
+  const enrolledAt = chain?.at(-1)?.created_at;
+  if (!Number.isSafeInteger(enrolledAt) || enrolledAt! > signedAt)
+    throw new Error('Событие предшествует подключению устройства.');
+  return verifyChain(chain, subject, enrolledAt);
 }
 export function extendChain(
   secret: Uint8Array,

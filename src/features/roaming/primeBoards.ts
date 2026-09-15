@@ -3,6 +3,7 @@ import {
   loadBoardSnapshot,
   loadOperationQueue,
   persistServerSnapshot,
+  serializeLocalState,
 } from '../localFirst/repository';
 import { fetchBoardSnapshot } from '../localFirst/snapshot';
 import {
@@ -10,6 +11,7 @@ import {
   getRoamingAuthorPublicKey,
   loadRoamingCapability,
   publishBoardSnapshot,
+  pullRoamingBoard,
 } from './service';
 import { provisionRoamingBoard } from '../../shared/api/endpoints';
 
@@ -19,26 +21,28 @@ export interface PrimeBoardsResult {
   failed: number;
 }
 
-async function primeBoard(workspaceId: string, board: Board) {
+export async function primeBoard(workspaceId: string, board: Board) {
   const [local, storedCapability] = await Promise.all([
     loadBoardSnapshot(board.id),
     loadRoamingCapability(board.id),
   ]);
+  // Enrollment is not a recurring liveness check of another peer.
+  if (storedCapability) {
+    if (local?.checklistsHydratedAt) return 'ready' as const;
+    const recovered = await pullRoamingBoard(storedCapability, local);
+    if (!recovered.snapshot) throw new Error('Relay ещё не содержит базового снимка доски.');
+    await serializeLocalState(async () => persistServerSnapshot(recovered.snapshot!, await loadOperationQueue()));
+    return 'prepared' as const;
+  }
   const authorPublicKey = await getRoamingAuthorPublicKey();
   const provisioned = await provisionRoamingBoard(board.id, authorPublicKey);
-  const capability = storedCapability?.capabilityEpoch === provisioned.capabilityEpoch
-    && storedCapability.boardTag === provisioned.boardTag
-    ? { ...provisioned, boardKey: storedCapability.boardKey }
-    : provisioned;
+  const capability = provisioned;
   await installRoamingCapability(capability);
   if (local?.checklistsHydratedAt) return 'ready' as const;
 
-  const [snapshot, operations] = await Promise.all([
-    fetchBoardSnapshot(board.id, workspaceId),
-    loadOperationQueue(),
-  ]);
-  const merged = await persistServerSnapshot(snapshot, operations);
-  if (capability.canWrite) await publishBoardSnapshot(capability, merged);
+  const snapshot = await fetchBoardSnapshot(board.id, workspaceId);
+  const merged = await serializeLocalState(async () => persistServerSnapshot(snapshot, await loadOperationQueue()));
+  if (capability.canWrite) await publishBoardSnapshot(capability, merged).catch(() => undefined);
   return 'prepared' as const;
 }
 

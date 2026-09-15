@@ -86,14 +86,6 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return saved;
   }, [applyStoredSession]);
 
-  const clearInvalidSession = useCallback(async () => {
-    await cancelAllCardReminders().catch(() => null);
-    await clearSessionBoundStorage();
-    applyStoredSession(null);
-    setOfflineSession(false);
-    queryClient.clear();
-  }, [applyStoredSession, queryClient]);
-
   const refreshCurrent = useCallback(() => {
     if (nativeRefreshPromiseRef.current) return nativeRefreshPromiseRef.current;
 
@@ -106,12 +98,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
         if (generationRef.current !== generation) return null;
         await applyResponse(response, nodeOrigin);
         return response.accessToken;
-      } catch (error) {
-        if (!(error instanceof ApiError) || ![401, 403].includes(error.status)) {
-          setOfflineSession(true);
-          return null;
-        }
-        await clearInvalidSession();
+      } catch {
+        // HTTP credentials do not own the separately provisioned board replica.
+        if (generationRef.current !== generation) return null;
+        setOfflineSession(true);
         return null;
       }
     })();
@@ -124,7 +114,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     };
     void refreshPromise.then(clearRefresh, clearRefresh);
     return refreshPromise;
-  }, [applyResponse, clearInvalidSession, nodeOrigin]);
+  }, [applyResponse, nodeOrigin]);
 
   useEffect(() => {
     setRefreshHandler(refreshCurrent);

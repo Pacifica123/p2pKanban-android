@@ -549,7 +549,7 @@ export function BoardScreen({ navigation, route }: Props) {
     syncText = `Сохранено на устройстве: ${formatCountRu(runtime.pendingCount, 'изменение', 'изменения', 'изменений')}`;
     syncTone = 'warning';
   } else if (runtime.relayPendingCount) {
-    syncText = `Реле приняло ${formatCountRu(runtime.relayPendingCount, 'изменение', 'изменения', 'изменений')} · ждём подтверждения узлом`;
+    syncText = `Реле приняло ${formatCountRu(runtime.relayPendingCount, 'изменение', 'изменения', 'изменений')} · восстанавливаем очередь публикации`;
     syncTone = 'warning';
   } else if (!isOnline) {
     syncText = runtime.syncMode === 'roaming'

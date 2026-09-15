@@ -22,7 +22,7 @@ function applyStateKey(boardId: string) {
   return sessionStorageKey(`roaming/apply-state/${boardId}`);
 }
 
-export async function saveRoamingCapability(capability: RoamingCapability) {
+async function writeRoamingCapability(capability: RoamingCapability) {
   const { boardKey, ...metadata } = capability;
   const rawIndex = await AsyncStorage.getItem(CAPABILITY_INDEX_KEY);
   let boardIds: string[] = [];
@@ -82,7 +82,7 @@ export async function saveRoamingApplyState(boardId: string, state: RoamingApply
   await AsyncStorage.setItem(applyStateKey(boardId), JSON.stringify(state));
 }
 
-export async function getOrCreateRoamingDeviceSecret(create: () => Uint8Array) {
+async function readOrCreateDeviceSecret(create: () => Uint8Array) {
   const current = await SecureStore.getItemAsync(DEVICE_SECRET_KEY);
   if (current) {
     const bytes = Uint8Array.from(current.match(/.{1,2}/g) || [], (pair) => Number.parseInt(pair, 16));
@@ -92,4 +92,16 @@ export async function getOrCreateRoamingDeviceSecret(create: () => Uint8Array) {
   const encoded = [...created].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   await SecureStore.setItemAsync(DEVICE_SECRET_KEY, encoded);
   return created;
+}
+
+let deviceSecretInFlight: Promise<Uint8Array> | null = null;
+export function getOrCreateRoamingDeviceSecret(create: () => Uint8Array) {
+  deviceSecretInFlight ??= readOrCreateDeviceSecret(create).finally(() => { deviceSecretInFlight = null; });
+  return deviceSecretInFlight;
+}
+let capabilityWrites = Promise.resolve();
+export function saveRoamingCapability(capability: RoamingCapability) {
+  const run = capabilityWrites.then(() => writeRoamingCapability(capability));
+  capabilityWrites = run.catch(() => undefined);
+  return run;
 }

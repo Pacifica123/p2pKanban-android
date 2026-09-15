@@ -1,6 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { InteractionManager } from 'react-native';
+import { AppState, InteractionManager } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
 import { ApiError, getApiNodeOrigin, isNetworkError } from '../../shared/api/client';
@@ -41,7 +41,10 @@ import {
   installRoamingCapability,
   loadRoamingCapability,
   publishBoardSnapshot,
-  publishLocalOperation,
+  commitLocalOperation,
+  flushReplicaJournal,
+  recoverLocalReplica,
+  publishedOperationIds,
   pullRoamingBoard,
 } from '../roaming/service';
 import { resetRoamingApplyState } from '../roaming/storage';
@@ -73,14 +76,12 @@ import {
   loadOperationQueue,
   persistBoardAndQueue,
   persistServerSnapshot,
+  serializeLocalState,
 } from './repository';
 import { fetchBoardSnapshot } from './snapshot';
 import { moveCardReminder } from '../reminders/service';
 import {
-  awaitsCoordinatorConfirmation,
-  markRelayAccepted,
-  relayCreateRequiresProjectionConfirmation,
-  relayOperationIsInCoordinatorSnapshot,
+  hasPendingPublication,
 } from './delivery';
 
 export interface LocalBoardRuntime {
@@ -234,7 +235,7 @@ export function useLocalBoard(
   const operationsRef = useRef<LocalOperation[]>([]);
   const roamingCapabilityRef = useRef<RoamingCapability | null>(null);
   const flushLock = useRef(false);
-  const storageChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const refreshLock = useRef(false);
   const nodeUnavailableUntilRef = useRef(0);
   const initialSyncTaskRef = useRef<ReturnType<
     typeof InteractionManager.runAfterInteractions
@@ -245,11 +246,7 @@ export function useLocalBoard(
     roamingCapabilityRef.current?.capabilityEpoch || 1,
   ), [accessEpoch]);
 
-  const runSerialized = useCallback(<T>(task: () => Promise<T>) => {
-    const run = storageChainRef.current.then(task, task);
-    storageChainRef.current = run.then(() => undefined, () => undefined);
-    return run;
-  }, []);
+  const runSerialized = useCallback(serializeLocalState, []);
 
   const applyState = useCallback((
     nextSnapshot: LocalBoardSnapshot | null,
@@ -262,7 +259,8 @@ export function useLocalBoard(
   }, [boardId]);
 
   const refresh = useCallback(async () => {
-    if (!isOnline) return;
+    if (!isOnline || refreshLock.current) return;
+    refreshLock.current = true;
     setRefreshing(true);
     setLastError(null);
     let relaySucceeded = false;
@@ -271,6 +269,24 @@ export function useLocalBoard(
     let relaySnapshot: LocalBoardSnapshot | null = null;
     let relayApplyState: Awaited<ReturnType<typeof pullRoamingBoard>>['applyState'] | undefined;
     try {
+      const installed = roamingCapabilityRef.current || await loadRoamingCapability(boardId);
+      if (installed) {
+        roamingCapabilityRef.current = installed;
+        const relay = await pullRoamingBoard(installed, snapshotRef.current);
+        await runSerialized(async () => {
+          const recovered = await recoverLocalReplica(installed, snapshotRef.current);
+          const hidden = await pruneLocallyHiddenCards(boardId, Object.keys(relay.applyState.tombstones || {}));
+          setLocallyHidden(hidden);
+          if (recovered) {
+            const visible = applyLocalCardVisibility(recovered, hidden);
+            const queue = await loadOperationQueue();
+            await persistBoardAndQueue(visible, queue);
+            applyState(visible, queue);
+          }
+        });
+        setSyncMode('roaming'); setRelayCount(relay.relayCount);
+        return;
+      }
       await runSerialized(async () => {
         const storedCapability = roamingCapabilityRef.current
           || await loadRoamingCapability(boardId);
@@ -301,7 +317,11 @@ export function useLocalBoard(
           }
         }
 
-        if (relaySucceeded && (preferRoaming || Date.now() < nodeUnavailableUntilRef.current)) return;
+        // A provisioned replica reads the journal. HTTP is only initial enrollment.
+        if (storedCapability) {
+          if (relayFailure) throw relayFailure;
+          return;
+        }
 
         try {
           await touchWorkspaceSync(workspaceId).catch(() => null);
@@ -331,10 +351,7 @@ export function useLocalBoard(
             setRelayCount(provisionedCapability.relays.length);
             relaySucceeded = true;
           }
-          const remainingOperations = allOperations.filter((operation) => (
-            operation.boardId !== boardId
-            || !relayOperationIsInCoordinatorSnapshot(operation, coordinatorSnapshot)
-          ));
+          const remainingOperations = allOperations;
           const nextHidden = await reconcileHiddenCardsWithCoordinator(
             boardId,
             coordinatorSnapshot.cards.map((card) => card.id),
@@ -357,10 +374,9 @@ export function useLocalBoard(
         }
       });
     } catch (error) {
-      setLastError(relayFailure
-        ? `Нет релейной связи: ${message(relayFailure)}. Прямой узел: ${message(error)}`
-        : `Прямой узел недоступен: ${message(error)}. Для relay нужна заранее подготовленная доска.`);
+      setLastError(message(relayFailure || error));
     } finally {
+      refreshLock.current = false;
       setRefreshing(false);
     }
   }, [applyState, boardId, isOnline, preferRoaming, runSerialized, workspaceId]);
@@ -372,6 +388,53 @@ export function useLocalBoard(
     setLastError(null);
 
     try {
+      const installed = roamingCapabilityRef.current || await loadRoamingCapability(boardId);
+      if (installed) {
+        roamingCapabilityRef.current = installed;
+        // Commit legacy pending intentions locally; transport never holds the UI storage lock.
+        await runSerialized(async () => {
+          let local = snapshotRef.current;
+          if (!local) return;
+          let queue = await loadOperationQueue();
+          for (const initial of queue.filter(op => op.boardId === boardId && op.status !== 'failed')) {
+            let operation = queue.find(op => op.id === initial.id)!;
+            if ((operation.accessEpoch || 1) !== installed.capabilityEpoch) {
+              queue = queue.map(op => op.id === operation.id ? {...op, status:'failed',lastError:'Изменилось поколение доступа; требуется обновлённый capability.'} : op);
+              continue;
+            }
+            let replacement: {snapshot: LocalBoardSnapshot; operations: LocalOperation[]} | null = null;
+            if (operation.kind === 'card.create' && isTemporaryCardId(operation.entityId)) {
+              replacement = replaceCreatedCard(local, queue, operation.entityId,
+                {...(local.cards.find(card => card.id === operation.entityId) || operation.payload.tempCard),id:Crypto.randomUUID()});
+            } else if (operation.kind === 'checklist.create' && isTemporaryChecklistId(operation.entityId)) {
+              replacement = replaceCreatedChecklist(local, queue, operation.payload.cardId, operation.entityId,
+                {...operation.payload.tempChecklist,id:Crypto.randomUUID()});
+            } else if (operation.kind === 'checklist.item.create' && isTemporaryChecklistItemId(operation.entityId)) {
+              replacement = replaceCreatedChecklistItem(local, queue, operation.payload.cardId, operation.entityId,
+                {...operation.payload.tempItem,id:Crypto.randomUUID()});
+            }
+            if (replacement) {
+              local = replacement.snapshot; queue = replacement.operations;
+              operation = queue.find(op => op.id === initial.id)!;
+            }
+            if (canPublishThroughRoaming(operation)) await commitLocalOperation(installed, operation, local, local, true);
+          }
+          await persistBoardAndQueue(local, queue);
+          applyState(local, queue);
+        });
+        try { await flushReplicaJournal(installed); }
+        catch (error) { setLastError(message(error)); }
+        await runSerialized(async () => {
+          const local = snapshotRef.current;
+          if (!local) return;
+          const delivered = await publishedOperationIds(installed);
+          const queue = (await loadOperationQueue()).filter(op => op.boardId !== boardId || !delivered.has(op.id));
+          await persistBoardAndQueue(local, queue);
+          applyState(local, queue);
+        });
+        setSyncMode('roaming'); setRelayCount(installed.relays.length);
+        return;
+      }
       await runSerialized(async () => {
         let allOperations = await loadOperationQueue();
         const initialSnapshot = snapshotRef.current;
@@ -379,12 +442,12 @@ export function useLocalBoard(
         let currentSnapshot: LocalBoardSnapshot = initialSnapshot;
         const boardOperations = allOperations
           .filter((operation) => operation.boardId === boardId
-            && awaitsCoordinatorConfirmation(operation))
+            && hasPendingPublication(operation))
           .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
         for (const queuedOperation of boardOperations) {
           const current = allOperations.find((candidate) => candidate.id === queuedOperation.id);
-          if (!current || !awaitsCoordinatorConfirmation(current)) continue;
+          if (!current || !hasPendingPublication(current)) continue;
 
           const capability = roamingCapabilityRef.current
             || await loadRoamingCapability(boardId);
@@ -406,49 +469,13 @@ export function useLocalBoard(
             continue;
           }
 
-          const publishFallback = async () => {
-            if (
-              current.status !== 'pending'
-              || !capability
-              || !capability.canWrite
-              || capability.capabilityEpoch !== activeEpoch
-              || !canPublishThroughRoaming(current)
-            ) return false;
-            await publishLocalOperation(capability, current, currentSnapshot);
-            allOperations = allOperations.map((candidate) => candidate.id === current.id
-              ? markRelayAccepted(candidate)
-              : candidate);
-            await persistBoardAndQueue(currentSnapshot, allOperations);
-            applyState(currentSnapshot, allOperations);
-            setSyncMode('roaming');
-            setRelayCount(capability.relays.length);
-            return true;
-          };
-
-          if (relayCreateRequiresProjectionConfirmation(current)) continue;
-
-          if (preferRoaming && capability) {
-            if (current.status === 'relay_pending') continue;
-            try {
-              if (await publishFallback()) continue;
-            } catch (error) {
-              setLastError(message(error));
-              break;
-            }
-          }
-
-          if (nodeUnavailableUntilRef.current > Date.now()) {
-            if (current.status === 'relay_pending') continue;
-            try {
-              if (await publishFallback()) continue;
-            } catch (error) {
-              setLastError(message(error));
-              break;
-            }
+          if (capability) break; // Enrollment raced this REST pass; next flush uses the journal.
+          if (current.status === 'relay_pending') {
+            setLastError('Для восстановления старой очереди нужен сохранённый ключ доски.');
+            break;
           }
 
           try {
-            let relayOperation: LocalOperation = current;
             let nextSnapshot: LocalBoardSnapshot = currentSnapshot;
             let nextOperations = allOperations;
 
@@ -473,11 +500,6 @@ export function useLocalBoard(
               nextSnapshot = replaced.snapshot;
               nextOperations = replaced.operations;
               await moveCardReminder(current.entityId, created.id, created.title);
-              relayOperation = {
-                ...current,
-                entityId: created.id,
-                payload: { ...current.payload, tempCard: created },
-              };
             } else if (current.kind === 'card.update') {
               const updated = await updateCardRemote(current.entityId, current.payload.input);
               nextSnapshot = replaceCardInSnapshot(nextSnapshot, updated);
@@ -507,11 +529,6 @@ export function useLocalBoard(
               );
               nextSnapshot = replaced.snapshot;
               nextOperations = replaced.operations;
-              relayOperation = {
-                ...current,
-                entityId: created.id,
-                payload: { ...current.payload, tempChecklist: created },
-              };
             } else if (current.kind === 'checklist.update') {
               const updated = await updateChecklistRemote(
                 current.entityId,
@@ -534,11 +551,6 @@ export function useLocalBoard(
               );
               nextSnapshot = replaced.snapshot;
               nextOperations = replaced.operations;
-              relayOperation = {
-                ...current,
-                entityId: created.id,
-                payload: { ...current.payload, tempItem: created },
-              };
             } else if (current.kind === 'checklist.item.update') {
               const updated = await updateChecklistItemRemote(
                 current.entityId,
@@ -564,48 +576,10 @@ export function useLocalBoard(
             await persistBoardAndQueue(currentSnapshot, allOperations);
             applyState(currentSnapshot, allOperations);
 
-            if (
-              current.status === 'pending'
-              && capability?.canWrite
-              && capability.capabilityEpoch === activeEpoch
-              && canPublishThroughRoaming(relayOperation)
-            ) {
-              void publishLocalOperation(
-                capability,
-                relayOperation,
-                currentSnapshot,
-              ).catch(() => null);
-            }
           } catch (error) {
-            const relayDeleteAlreadyConfirmed = current.status === 'relay_pending'
-              && error instanceof ApiError
-              && error.status === 404
-              && (
-                current.kind === 'card.delete'
-                || current.kind === 'checklist.delete'
-                || current.kind === 'checklist.item.delete'
-              );
-            if (relayDeleteAlreadyConfirmed) {
-              allOperations = allOperations.filter((candidate) => candidate.id !== current.id);
-              await persistBoardAndQueue(currentSnapshot, allOperations);
-              applyState(currentSnapshot, allOperations);
-              continue;
-            }
             if (coordinatorUnavailable(error)) {
               nodeUnavailableUntilRef.current = Date.now() + 30_000;
-              if (current.status === 'relay_pending') {
-                setLastError('Реле уже приняло изменение; ждём подтверждения исходным узлом.');
-                break;
-              }
-              try {
-                if (await publishFallback()) continue;
-              } catch (relayError) {
-                setLastError(message(relayError));
-                break;
-              }
-              setLastError(
-                'Локальный узел недоступен, а это изменение ещё нельзя отправить через relay.',
-              );
+              setLastError('Узел недоступен; для relay требуется первоначальная подготовка доски.');
               break;
             }
 
@@ -639,7 +613,8 @@ export function useLocalBoard(
       loadLocalBoardState(boardId),
       loadRoamingCapability(boardId),
       loadLocallyHiddenCards(boardId),
-    ]).then(([local, capability, hidden]) => {
+    ]).then(async ([local, capability, hidden]) => {
+      if (capability) local.snapshot = await recoverLocalReplica(capability, local.snapshot);
       if (!active) return;
       setLocallyHidden(hidden);
       roamingCapabilityRef.current = capability;
@@ -653,7 +628,7 @@ export function useLocalBoard(
       );
       setHydrated(true);
       if (isOnline) {
-        const hasPending = local.operations.some(awaitsCoordinatorConfirmation);
+        const hasPending = local.operations.some(hasPendingPublication);
         initialSyncTaskRef.current = InteractionManager.runAfterInteractions(() => {
           initialSyncTaskRef.current = null;
           if (!active) return;
@@ -673,10 +648,24 @@ export function useLocalBoard(
   }, [applyState, boardId, flush, isOnline, refresh]);
 
   useEffect(() => {
-    if (isOnline && operations.some(awaitsCoordinatorConfirmation)) {
+    if (isOnline && operations.some(hasPendingPublication)) {
       void flush();
     }
   }, [flush, isOnline, operations]);
+
+  useEffect(() => {
+    if (!isOnline || !hydrated) return;
+    let active = AppState.currentState === 'active';
+    const synchronize = () => {
+      if (active) void flush().then(() => refresh()).catch(error => setLastError(message(error)));
+    };
+    const timer = setInterval(synchronize, 15_000);
+    const subscription = AppState.addEventListener('change', state => {
+      active = state === 'active';
+      if (active) synchronize();
+    });
+    return () => { clearInterval(timer); subscription.remove(); };
+  }, [flush, refresh, hydrated, isOnline]);
 
   const enqueue = useCallback(async (operation: LocalOperation) => {
     if (!canEdit) throw new Error('Гостевой доступ разрешает только чтение доски.');
@@ -686,6 +675,10 @@ export function useLocalBoard(
       const allOperations = await loadOperationQueue();
       const nextOperations = [...allOperations, operation];
       const nextSnapshot = applyOperation(snapshotRef.current || currentSnapshot, operation);
+      const capability = roamingCapabilityRef.current || await loadRoamingCapability(boardId);
+      if (capability && canPublishThroughRoaming(operation)) {
+        await commitLocalOperation(capability, operation, nextSnapshot, snapshotRef.current || currentSnapshot);
+      }
       await persistBoardAndQueue(nextSnapshot, nextOperations);
       applyState(nextSnapshot, nextOperations);
     });
@@ -808,9 +801,9 @@ export function useLocalBoard(
       if (!card) return;
       const allOperations = await loadOperationQueue();
       const isUnsyncedCreate = allOperations.some((operation) =>
-        operation.kind === 'card.create' && operation.entityId === cardId);
+        operation.kind === 'card.create' && operation.entityId === cardId && !roamingCapabilityRef.current);
       if (!isUnsyncedCreate) {
-        if (allOperations.some((operation) => operationAffectsCard(operation, cardId))) {
+        if (!roamingCapabilityRef.current && allOperations.some((operation) => operationAffectsCard(operation, cardId))) {
           throw new Error('Сначала дождитесь синхронизации изменений этой карточки.');
         }
         await enqueue({
@@ -966,7 +959,7 @@ export function useLocalBoard(
       const related = operations.filter((operation) =>
         operationAffectsCard(operation, cardId));
       if (related.some((operation) => operation.status === 'failed')) return 'failed';
-      if (related.some(awaitsCoordinatorConfirmation)) return 'pending';
+      if (related.some(hasPendingPublication)) return 'pending';
       return null;
     },
   }), [

@@ -31,7 +31,7 @@ if (
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
   || appJson.expo.version !== packageJson.version
-  || appJson.expo.android.versionCode !== 21
+  || appJson.expo.android.versionCode !== 22
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }
@@ -81,25 +81,19 @@ requireText('src/features/localFirst/model.ts', [
   "status: 'pending' | 'relay_pending' | 'failed'",
   'accessEpoch?',
 ]);
-requireText('src/features/localFirst/delivery.ts', [
-  'markRelayAccepted',
-  "status: 'relay_pending'",
-  'awaitsCoordinatorConfirmation',
-  'relayOperationIsInCoordinatorSnapshot',
-  'relayCreateRequiresProjectionConfirmation',
-]);
+requireText('src/features/localFirst/delivery.ts', ['hasPendingPublication']);
 requireText('src/features/localFirst/useLocalBoard.ts', [
-  'const publishFallback',
+  'commitLocalOperation(',
+  'flushReplicaJournal(',
+  'publishedOperationIds(',
   'createCardRemote',
   'coordinatorUnavailable(error)',
-  'publishLocalOperation(',
   'createChecklistItemRemote',
   'deleteChecklistItemRemote',
   'hideCardOnThisDevice',
   'restoreCardOnThisDevice',
   'InteractionManager.runAfterInteractions',
   'initialSyncTaskRef.current?.cancel()',
-  'markRelayAccepted',
   'relayPendingCount',
   'capabilityEpoch',
   'canEdit',
@@ -205,3 +199,5 @@ requireText('android/app/build.gradle', [
 ]);
 
 console.log('OK: Android CRUD, reminders, appearance, roaming, versions and drag contract are aligned');
+
+forbidText('src/features/localFirst/useLocalBoard.ts', ['ждём подтверждения исходным узлом', 'relayOperationIsInCoordinatorSnapshot']);

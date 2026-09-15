@@ -64,7 +64,13 @@ export function BoardsScreen({ navigation, route }: Props) {
   const query = useQuery({
     queryKey: ['boards', workspaceId],
     queryFn: async () => {
-      const response = await getBoards(workspaceId);
+      let response;
+      try { response = await getBoards(workspaceId); }
+      catch (error) {
+        const local = await loadCachedBoards(workspaceId);
+        if (local.length) return { items: local };
+        throw error;
+      }
       await saveCachedBoards(workspaceId, response.items);
       setCached(response.items);
       return response;
@@ -194,13 +200,13 @@ export function BoardsScreen({ navigation, route }: Props) {
       ) : null}
       {primeState.status === 'running' ? (
         <InlineNotice
-          text="Готовим доски для работы без домашнего узла…"
+          text="Проверяем локальные реплики досок…"
           tone="neutral"
         />
       ) : null}
       {primeState.status === 'done' && primeState.result?.failed ? (
         <InlineNotice
-          text={`${formatCountRu(primeState.result.failed, 'доску', 'доски', 'досок')} пока не удалось подготовить. Повторим при следующей связи с узлом.`}
+          text={`${formatCountRu(primeState.result.failed, 'доску', 'доски', 'досок')} пока не удалось восстановить. Для нового устройства нужен ключ; для известной доски — сохранённый снимок или доступный relay.`}
           tone="warning"
         />
       ) : null}
