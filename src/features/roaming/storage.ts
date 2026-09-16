@@ -13,6 +13,12 @@ import type {
 const CAPABILITY_INDEX_KEY = sessionStorageKey('roaming/capability-index');
 const CAPABILITY_SECRET_PREFIX = 'p2pkanban.mobile.roaming-capability.v1';
 const DEVICE_SECRET_KEY = 'p2pkanban.mobile.roaming-device-key.v1';
+const CATALOG_CHANNEL_KEY = 'p2pkanban.mobile.roaming-catalog-channel.v1';
+export interface RoamingCatalogChannel {
+  relays: string[];
+  eventKind: number;
+  trustedPublishers: string[];
+}
 
 function metadataKey(boardId: string) {
   return sessionStorageKey(`roaming/capability/${boardId}`);
@@ -23,6 +29,16 @@ function applyStateKey(boardId: string) {
 }
 
 async function writeRoamingCapability(capability: RoamingCapability) {
+  const previousChannel = await loadRoamingCatalogChannel();
+  const channel: RoamingCatalogChannel = {
+    relays: [...new Set([...(previousChannel?.relays || []), ...(capability.relays || [])])],
+    eventKind: (capability.eventKind || 0) + 1,
+    trustedPublishers: [...new Set([
+      ...(previousChannel?.trustedPublishers || []),
+      ...(capability.writerPublicKeys || []).map(key => key.toLowerCase()),
+      ...(capability.delegationRoots || []).map(key => key.toLowerCase()),
+    ])],
+  };
   const { boardKey, ...metadata } = capability;
   const rawIndex = await AsyncStorage.getItem(CAPABILITY_INDEX_KEY);
   let boardIds: string[] = [];
@@ -41,6 +57,7 @@ async function writeRoamingCapability(capability: RoamingCapability) {
       CAPABILITY_INDEX_KEY,
       JSON.stringify([...new Set([...boardIds, capability.boardId])]),
     ),
+    SecureStore.setItemAsync(CATALOG_CHANNEL_KEY, JSON.stringify(channel)),
   ]);
 }
 
@@ -104,4 +121,23 @@ export function saveRoamingCapability(capability: RoamingCapability) {
   const run = capabilityWrites.then(() => writeRoamingCapability(capability));
   capabilityWrites = run.catch(() => undefined);
   return run;
+}
+
+export async function loadRoamingCatalogChannel(): Promise<RoamingCatalogChannel | null> {
+  const raw = await SecureStore.getItemAsync(CATALOG_CHANNEL_KEY);
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<RoamingCatalogChannel>;
+    if (!Array.isArray(value.relays) || !Number.isInteger(value.eventKind)
+      || !Array.isArray(value.trustedPublishers)) return null;
+    return value as RoamingCatalogChannel;
+  } catch { return null; }
+}
+
+export async function listRoamingCapabilities() {
+  const raw = await AsyncStorage.getItem(CAPABILITY_INDEX_KEY);
+  let ids: string[] = [];
+  try { ids = raw ? JSON.parse(raw) : []; } catch { ids = []; }
+  const values = await Promise.all(ids.map(loadRoamingCapability));
+  return values.filter((value): value is RoamingCapability => Boolean(value));
 }

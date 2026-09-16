@@ -140,3 +140,15 @@ export function serializeLocalState<T>(task: () => Promise<T>): Promise<T> {
   localWrites = run.then(() => undefined, () => undefined);
   return run;
 }
+
+/** The local replica is also the board catalog when the HTTP node is elsewhere. */
+export async function listLocalReplicaBoards(workspaceId: string) {
+  const prefix = sessionStorageKey('local-first/board/');
+  const keys = (await AsyncStorage.getAllKeys()).filter(key => key.startsWith(prefix));
+  const rows = await AsyncStorage.multiGet(keys);
+  const boards = rows.flatMap(([, raw]) => {
+    const snapshot = parse<LocalBoardSnapshot | null>(raw, null);
+    return snapshot?.workspaceId === workspaceId && snapshot.board?.id ? [snapshot.board] : [];
+  });
+  return [...new Map(boards.map(board => [board.id, board])).values()];
+}

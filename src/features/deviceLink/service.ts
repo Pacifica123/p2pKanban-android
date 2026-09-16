@@ -15,6 +15,7 @@ import {
 } from '../../shared/storage/storage';
 import {
   getOrCreateRoamingDeviceSecret,
+  listRoamingCapabilities,
   loadRoamingApplyState,
   loadRoamingCapability,
 } from '../roaming/storage';
@@ -101,6 +102,30 @@ export async function approveDevice(raw: string, userId: string) {
   const data = decryptPack(k, cached);
   if (data.snapshot.user.id !== userId)
     throw new Error('Снимок принадлежит другому аккаунту.');
+  // Capabilities may arrive through the relay after the original preparation.
+  // Add them to this one-time approval so Android can admit a new peer while
+  // the PC that created the board is offline.
+  for (const capability of await listRoamingCapabilities()) {
+    if (!capability.delegationChain?.length || data.chains[capability.boardId]) continue;
+    const local = await loadBoardSnapshot(capability.boardId);
+    if (!local || local.workspaceId !== capability.workspaceId) continue;
+    const verified = verifyChain(capability.delegationChain, getPublicKey(k));
+    if (verified.grant.boardId !== capability.boardId
+      || verified.grant.workspaceId !== capability.workspaceId) continue;
+    const workspace = data.snapshot.workspaces.find(
+      (w: any) => w.bundle['manifest.json'].workspaceId === capability.workspaceId,
+    );
+    if (!workspace) continue;
+    data.chains[capability.boardId] = capability.delegationChain;
+    if (!data.snapshot.boardCapabilities.some((item: any) => item.boardId === capability.boardId)) {
+      data.snapshot.boardCapabilities.push({
+        boardId: capability.boardId,
+        boardTag: capability.boardTag,
+        boardKey: capability.boardKey,
+      });
+    }
+    overlayBoard(workspace.bundle.payload, local, new Set());
+  }
   for (const [boardId, rawChain] of Object.entries(data.chains)) {
     const chain = rawChain as Event[],
       { grant } = verifyChain(chain, getPublicKey(k)),

@@ -161,3 +161,19 @@ export function decryptPack(secret: Uint8Array, response: Event) {
   }
   return JSON.parse(new TextDecoder().decode(b));
 }
+
+export function decryptPayloadParts(secret: Uint8Array, sender: string, parts: string[]) {
+  if (!parts.length || parts.length > 350) throw new Error('Неверный каталог реплик.');
+  const key = getConversationKey(secret, sender), chunks: Uint8Array[] = [];
+  let length = 0;
+  for (const part of parts) {
+    if (typeof part !== 'string' || part.length > 66000) throw new Error('Повреждён фрагмент каталога.');
+    const chunk = roamingBase64.decode(decrypt(part, key));
+    length += chunk.length;
+    if (length > 8 * 1024 * 1024) throw new Error('Каталог реплик слишком велик.');
+    chunks.push(chunk);
+  }
+  const bytes = new Uint8Array(length); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  return JSON.parse(new TextDecoder().decode(bytes));
+}

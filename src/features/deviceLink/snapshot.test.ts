@@ -36,8 +36,11 @@ test('partial cache does not delete unseen cards; explicit deletion prunes depen
   expect(payload.cards[1].title).toBe('Offline');
   expect(payload.checklistItems).toEqual([]);
   expect(payload.comments).toEqual([]);
-  local.cards[0].columnId = 'unknown';
-  expect(() => overlayBoard(payload, local, new Set())).toThrow();
+  local.columns = [{ id: 'new-column', boardId: 'b' }];
+  local.cards[0].columnId = 'new-column';
+  overlayBoard(payload, local, new Set());
+  expect(payload.boards.map((board: any) => board.id)).toEqual(['b']);
+  expect(payload.columns.map((column: any) => column.id)).toContain('new-column');
 });
 test('adjacent move works without changing priority/manual order', () => {
   const cards: any = [

@@ -5,16 +5,21 @@ export function overlayBoard(
   local: LocalBoardSnapshot,
   deleted: Set<string>,
 ) {
-  const boardId = local.board.id,
-    columns = new Set(
-      payload.columns
-        .filter((c: any) => c.boardId === boardId)
-        .map((c: any) => c.id),
-    );
-  if (local.cards.some((c) => !columns.has(c.columnId)))
-    throw new Error(
-      'Появились новые колонки. Обновите подготовку при доступном узле.',
-    );
+  const boardId = local.board.id;
+  payload.boards ||= [];
+  payload.columns ||= [];
+  payload.cards ||= [];
+  payload.checklists ||= [];
+  payload.checklistItems ||= [];
+  payload.cardLabels ||= [];
+  payload.comments ||= [];
+  payload.boardAppearanceSettings ||= [];
+  const boards = new Map(payload.boards.map((board: any) => [board.id, board]));
+  boards.set(boardId, local.board);
+  payload.boards = [...boards.values()];
+  const columns = new Map(payload.columns.map((column: any) => [column.id, column]));
+  for (const column of local.columns || []) columns.set(column.id, column);
+  payload.columns = [...columns.values()];
   const cards = new Map(payload.cards.map((c: any) => [c.id, c]));
   for (const c of local.cards) cards.set(c.id, c);
   for (const id of deleted) cards.delete(id);

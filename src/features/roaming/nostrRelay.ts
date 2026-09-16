@@ -53,7 +53,7 @@ async function publishOne(url: string, event: NostrEvent) {
   });
 }
 
-async function fetchOne(url: string, filter: Filter) {
+export async function fetchOne(url: string, filter: Filter) {
   return withRelay<NostrEvent[]>(url, (socket, finish, fail) => {
     const subscriptionId = `p2pk-${Math.random().toString(36).slice(2)}`;
     const events: NostrEvent[] = [];
@@ -133,4 +133,20 @@ export async function fetchFromRelays(input: {
     throw new Error(`Релейная связь недоступна. ${errors.join('; ')}`);
   }
   return { events: [...eventsById.values()], relayCount };
+}
+
+export async function fetchDeviceCatalogEvents(input: {
+  relays: string[]; kind: number; recipient: string;
+}) {
+  const filter: Filter = { kinds: [input.kind], '#p': [input.recipient] };
+  const settled = await Promise.allSettled(input.relays.map(relay => fetchOne(relay, filter)));
+  const events = new Map<string, NostrEvent>();
+  let relayCount = 0;
+  for (const result of settled) {
+    if (result.status !== 'fulfilled') continue;
+    relayCount += 1;
+    for (const event of result.value) events.set(event.id, event);
+  }
+  if (!relayCount) throw new Error('Каталог реплик недоступен через настроенные relay.');
+  return {events:[...events.values()], relayCount};
 }

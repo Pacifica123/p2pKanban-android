@@ -5,6 +5,10 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
+import {getApiNodeOrigin} from '../../shared/api/client';
+import {isPrivateNodeOrigin} from '../connection/connection';
+import {listLocalReplicaBoards} from '../localFirst/repository';
+import {refreshDeviceCatalog} from '../roaming/catalog';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
 import {
@@ -46,6 +50,8 @@ export function BoardsScreen({ navigation, route }: Props) {
   const canEdit = workspaceRole === 'owner' || workspaceRole === 'member';
   const colors = useAppColors();
   const { isOnline, networkType } = useNetwork();
+  const privateHttpNode = isPrivateNodeOrigin(getApiNodeOrigin());
+  const preferReplicaCatalog = networkType === 'cellular' && privateHttpNode;
   const queryClient = useQueryClient();
   const [cached, setCached] = useState<Board[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
@@ -58,7 +64,13 @@ export function BoardsScreen({ navigation, route }: Props) {
   >({ status: 'idle', result: null });
 
   useEffect(() => {
-    void loadCachedBoards(workspaceId).then(setCached);
+    let active=true;
+    void Promise.all([loadCachedBoards(workspaceId),listLocalReplicaBoards(workspaceId)])
+      .then(([saved,replicas])=>{
+        if(!active)return;
+        setCached([...new Map([...saved,...replicas].map(board=>[board.id,board])).values()]);
+      });
+    return()=>{active=false;};
   }, [workspaceId]);
 
   const query = useQuery({
@@ -75,7 +87,7 @@ export function BoardsScreen({ navigation, route }: Props) {
       setCached(response.items);
       return response;
     },
-    enabled: isOnline,
+    enabled: isOnline && !preferReplicaCatalog,
   });
 
   const saveMutation = useMutation({
@@ -109,7 +121,15 @@ export function BoardsScreen({ navigation, route }: Props) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['boards', workspaceId] }),
   });
 
-  const items = query.data?.items ?? cached;
+  const items = query.data?.items?.length ? query.data.items : cached;
+  useEffect(()=>{
+    if(!isOnline)return;
+    let active=true;
+    void refreshDeviceCatalog(workspaceId).then(boards=>{
+      if(active&&boards.length)setCached(current=>[...new Map([...current,...boards].map(board=>[board.id,board])).values()]);
+    }).catch(()=>undefined);
+    return()=>{active=false;};
+  },[isOnline,workspaceId]);
   const boardIds = items.map((board) => board.id).join('|');
 
   function openCreate() {
@@ -224,9 +244,9 @@ export function BoardsScreen({ navigation, route }: Props) {
         /> : null}
       </View>
 
-      {query.isPending && !items.length ? <StateView title="Загружаем доски" busy /> : null}
+      {query.isPending && !items.length && !preferReplicaCatalog ? <StateView title="Загружаем доски" busy /> : null}
 
-      {query.isError && !items.length ? (
+      {query.isError && !items.length && !privateHttpNode ? (
         <StateView
           title="Доски недоступны"
           description={query.error instanceof Error ? query.error.message : 'Не удалось получить данные.'}
@@ -234,13 +254,13 @@ export function BoardsScreen({ navigation, route }: Props) {
         />
       ) : null}
 
-      {!query.isPending && !items.length ? (
+      {(!query.isPending || preferReplicaCatalog) && !items.length ? (
         <StateView
           title="Досок пока нет"
-          description={isOnline
+          description={isOnline && !preferReplicaCatalog
             ? 'Создайте первую доску в этом пространстве.'
             : 'После подключения здесь появятся сохранённые доски.'}
-          action={isOnline && canEdit
+          action={isOnline && !preferReplicaCatalog && canEdit
             ? <Button label="Создать доску" variant="primary" onPress={openCreate} />
             : undefined}
         />
