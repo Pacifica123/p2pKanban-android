@@ -27,11 +27,11 @@ const packageJson = JSON.parse(read('package.json'));
 const packageLock = JSON.parse(read('package-lock.json'));
 const appJson = JSON.parse(read('app.json'));
 if (
-  packageJson.version !== '2.0.0'
+  packageJson.version !== '2.1.0'
   || packageLock.version !== packageJson.version
   || packageLock.packages?.['']?.version !== packageJson.version
   || appJson.expo.version !== packageJson.version
-  || appJson.expo.android.versionCode !== 22
+  || appJson.expo.android.versionCode !== 23
 ) {
   throw new Error('Версии Android package, lock и Expo не согласованы.');
 }
@@ -194,8 +194,8 @@ requireText('src/features/sync/syncService.ts', [
   "appVersion: '1.0.0'",
 ]);
 requireText('android/app/build.gradle', [
-  'versionCode 10',
-  'versionName "1.0.0"',
+  'versionCode 23',
+  'versionName "2.1.0"',
 ]);
 
 console.log('OK: Android CRUD, reminders, appearance, roaming, versions and drag contract are aligned');

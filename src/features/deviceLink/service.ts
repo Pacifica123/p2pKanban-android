@@ -1,4 +1,6 @@
 import { fetchFromRelays } from '../roaming/nostrRelay';
+import { pullRoamingBoard } from '../roaming/service';
+import { normalizeNodeOrigin, isPrivateNodeOrigin } from '../connection/connection';
 import {
   finalizeEvent,
   getPublicKey,
@@ -10,6 +12,7 @@ import * as Sharing from 'expo-sharing';
 import { apiRequest, isNetworkError } from '../../shared/api/client';
 import {
   readSessionJson,
+  loadCachedWorkspaces,
   sessionStorageKey,
   writeSessionJson,
 } from '../../shared/storage/storage';
@@ -84,7 +87,7 @@ export async function preparationInfo() {
 export async function deviceFingerprint() {
   return getPublicKey(await secret());
 }
-export async function approveDevice(raw: string, userId: string) {
+export async function approveDevice(raw: string, userId: string, deliver?: (signed: Event) => Promise<void>) {
   if (raw.length > 10000) throw new Error('Слишком большой запрос.');
   const request = JSON.parse(raw) as Event,
     { recipient, id, expiresAt } = checkRequest(request),
@@ -93,7 +96,7 @@ export async function approveDevice(raw: string, userId: string) {
     `device-link/issued/${id}`,
     null,
   );
-  if (saved) return shareApproval(saved);
+  if (saved) return deliver ? deliver(saved) : shareApproval(saved);
   const cached = await readSessionJson<Event | null>(CACHE, null);
   if (!cached)
     throw new Error(
@@ -107,15 +110,36 @@ export async function approveDevice(raw: string, userId: string) {
   // the PC that created the board is offline.
   for (const capability of await listRoamingCapabilities()) {
     if (!capability.delegationChain?.length || data.chains[capability.boardId]) continue;
-    const local = await loadBoardSnapshot(capability.boardId);
+    let local = await loadBoardSnapshot(capability.boardId);
+    if (!local) {
+      try { local = (await pullRoamingBoard(capability, null)).snapshot; }
+      catch { /* Missing board baseline: cannot honestly grant board data. */ }
+    }
     if (!local || local.workspaceId !== capability.workspaceId) continue;
     const verified = verifyChain(capability.delegationChain, getPublicKey(k));
     if (verified.grant.boardId !== capability.boardId
       || verified.grant.workspaceId !== capability.workspaceId) continue;
-    const workspace = data.snapshot.workspaces.find(
+    let workspace = data.snapshot.workspaces.find(
       (w: any) => w.bundle['manifest.json'].workspaceId === capability.workspaceId,
     );
-    if (!workspace) continue;
+    if (!workspace) {
+      const metadata = (await loadCachedWorkspaces()).find(w => w.id === capability.workspaceId
+        && w.ownerUserId === userId);
+      const template = data.snapshot.workspaces[0];
+      if (!metadata || !template) continue;
+      const bundle = JSON.parse(JSON.stringify(template.bundle));
+      bundle['manifest.json'].workspaceId = capability.workspaceId;
+      bundle.scope.workspaceId = capability.workspaceId;
+      for (const key of Object.keys(bundle.payload)) bundle.payload[key] = [];
+      bundle.payload.workspaces = [{
+        id:metadata.id,ownerUserId:userId,name:metadata.name,slug:null,
+        description:metadata.description || null,visibility:metadata.visibility,
+        createdAt:metadata.createdAt,updatedAt:metadata.updatedAt,
+        archivedAt:metadata.archivedAt || null,
+      }];
+      workspace = {membershipRole:'owner',bundle};
+      data.snapshot.workspaces.push(workspace);
+    }
     data.chains[capability.boardId] = capability.delegationChain;
     if (!data.snapshot.boardCapabilities.some((item: any) => item.boardId === capability.boardId)) {
       data.snapshot.boardCapabilities.push({
@@ -176,7 +200,7 @@ export async function approveDevice(raw: string, userId: string) {
     k,
   );
   await writeSessionJson(`device-link/issued/${id}`, response);
-  await shareApproval(response);
+  if (deliver) await deliver(response); else await shareApproval(response);
 }
 async function shareApproval(e: Event) {
   const f = new File(
@@ -204,4 +228,30 @@ export async function probePreparedRelays() {
     } catch (error) { reports.push(`${boardId}: ${error instanceof Error ? error.message : String(error)}`); }
   }
   return reports.join('\n') || 'В разрешении нет досок.';
+}
+
+/** Android initiates the LAN connection; the phone never needs an HTTP server. */
+export function nearbyWebOrigin(value: string) {
+  const origin = normalizeNodeOrigin(value);
+  if (!isPrivateNodeOrigin(origin) || !/^http:\/\/(?:\d{1,3}\.){3}\d{1,3}:\d+$/.test(origin))
+    throw new Error('Укажите числовой IPv4:порт ноутбука в локальной сети.');
+  return origin;
+}
+export async function fetchNearbyRequest(address: string): Promise<Event> {
+  const origin = nearbyWebOrigin(address);
+  const response = await fetch(`${origin}/api/v1/auth/device-link/lan/pending-request`);
+  if (!response.ok) throw new Error('Ноутбук не отвечает. Откройте p2pKanban и «Ожидать ответ Android».');
+  const json = await response.json() as {data:{request:Event|null}};
+  if (!json.data?.request) throw new Error('На ноутбуке сначала нажмите «Ожидать ответ Android».');
+  checkRequest(json.data.request);
+  return json.data.request;
+}
+export async function approveNearbyDevice(raw: string, userId: string, address: string) {
+  const origin = nearbyWebOrigin(address);
+  await approveDevice(raw,userId,async signed => {
+    const response = await fetch(`${origin}/api/v1/auth/device-link/lan/mobile-result`, {
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(signed),
+    });
+    if (!response.ok) throw new Error('Ноутбук отклонил разрешение. Повторите запрос до истечения 10 минут.');
+  });
 }

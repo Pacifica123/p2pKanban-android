@@ -123,13 +123,13 @@ export function BoardsScreen({ navigation, route }: Props) {
 
   const items = query.data?.items?.length ? query.data.items : cached;
   useEffect(()=>{
-    if(!isOnline)return;
+    if(!isOnline || (!preferReplicaCatalog && query.isSuccess))return;
     let active=true;
     void refreshDeviceCatalog(workspaceId).then(boards=>{
       if(active&&boards.length)setCached(current=>[...new Map([...current,...boards].map(board=>[board.id,board])).values()]);
     }).catch(()=>undefined);
     return()=>{active=false;};
-  },[isOnline,workspaceId]);
+  },[isOnline,workspaceId,preferReplicaCatalog,query.isSuccess]);
   const boardIds = items.map((board) => board.id).join('|');
 
   function openCreate() {
@@ -184,7 +184,7 @@ export function BoardsScreen({ navigation, route }: Props) {
     if (!isOnline || !items.length) return;
     let active = true;
     setPrimeState({ status: 'running', result: null });
-    void primeWorkspaceBoards(workspaceId, items).then((result) => {
+    void primeWorkspaceBoards(workspaceId, items, networkType === 'wifi' || networkType === 'ethernet').then((result) => {
       if (active) {
         setPrimeState({ status: 'done', result });
         if (workspaceRole === 'owner' && result.failed === 0) void prepareDeviceLink().catch(() => undefined);

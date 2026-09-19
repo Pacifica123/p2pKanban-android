@@ -1,16 +1,16 @@
 import type {Event} from 'nostr-tools/pure';
-import {refreshDeviceCatalog} from './catalog';
-import {decryptPayloadParts} from '../deviceLink/protocol';
+import {refreshDeviceCatalog,refreshWorkspaceCatalog} from './catalog';
+import {decryptPayloadParts,verifyChain} from '../deviceLink/protocol';
 import {fetchDeviceCatalogEvents} from './nostrRelay';
 import {installRoamingCapability} from './service';
-import {saveCachedBoards} from '../../shared/storage/storage';
+import {saveCachedBoards,saveCachedWorkspaces} from '../../shared/storage/storage';
 
 const board={id:'board',workspaceId:'workspace',name:'Relay board',boardType:'kanban',isArchived:false,createdAt:'2026-01-01',updatedAt:'2026-01-01'};
 const capability={formatVersion:1,protocolVersion:'p2p-kanban-roaming/1',workspaceId:'workspace',boardId:'board',boardTag:'tag',boardKey:'key',capabilityEpoch:1,canWrite:true,writerPublicKeys:['trusted'],relays:['wss://relay'],eventKind:30101,minimumRelayAcks:1,provisionedAt:'2026-01-01'};
 
 jest.mock('./nostrRelay',()=>({fetchDeviceCatalogEvents:jest.fn()}));
 jest.mock('./service',()=>({installRoamingCapability:jest.fn()}));
-jest.mock('../deviceLink/protocol',()=>({decryptPayloadParts:jest.fn()}));
+jest.mock('../deviceLink/protocol',()=>({decryptPayloadParts:jest.fn(),verifyChain:jest.fn()}));
 jest.mock('./storage',()=>({
   getOrCreateRoamingDeviceSecret:async()=>new Uint8Array(32).fill(1),
   loadRoamingCatalogChannel:async()=>({relays:['wss://relay'],eventKind:30102,trustedPublishers:['trusted']}),
@@ -18,6 +18,8 @@ jest.mock('./storage',()=>({
 jest.mock('../../shared/storage/storage',()=>({
   loadCachedBoards:jest.fn(async()=>[]),
   saveCachedBoards:jest.fn(),
+  loadCachedWorkspaces:jest.fn(async()=>[]),
+  saveCachedWorkspaces:jest.fn(),
 }));
 
 function event(pubkey:string,parts:string[],created_at=1):Event{return {
@@ -33,4 +35,20 @@ test('restores a missing board and capability from a trusted direct relay catalo
   expect(decryptPayloadParts).toHaveBeenCalledTimes(1);
   expect(installRoamingCapability).toHaveBeenCalledWith(capability);
   expect(saveCachedBoards).toHaveBeenCalledWith('workspace',[board]);
+});
+
+test('recovers a new workspace from an encrypted catalog with a verified delegation',async()=>{
+  (fetchDeviceCatalogEvents as jest.Mock).mockResolvedValue({relayCount:1,events:[event('trusted',['workspace'],2)]});
+  (decryptPayloadParts as jest.Mock).mockReturnValue({protocol:'p2p-kanban-device-catalog/1',
+    workspaceId:'workspace',workspace:{id:'workspace',name:'New space',visibility:'private'},
+    board,capability,publishedAt:'2026-01-01'});
+  (verifyChain as jest.Mock).mockReturnValue({root:'trusted',grant:{userId:'user',boardId:'board',
+    workspaceId:'workspace',epoch:1,canDelegate:true}});
+  await expect(refreshWorkspaceCatalog('user')).resolves.toEqual([
+    expect.objectContaining({id:'workspace',name:'New space',ownerUserId:'user'}),
+  ]);
+  expect(saveCachedBoards).toHaveBeenCalledWith('workspace',[board]);
+  expect(saveCachedWorkspaces).toHaveBeenCalledWith([
+    expect.objectContaining({id:'workspace',accessEpoch:1}),
+  ]);
 });

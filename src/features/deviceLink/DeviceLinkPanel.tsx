@@ -5,6 +5,8 @@ import { Button, Field, InlineNotice, Panel } from '../../shared/ui/primitives';
 import { useAuth } from '../auth/AuthProvider';
 import {
   approveDevice,
+  approveNearbyDevice,
+  fetchNearbyRequest,
   deviceFingerprint,
   preparationInfo,
   prepareDeviceLink,
@@ -16,6 +18,7 @@ export function DeviceLinkPanel() {
     { user } = useAuth();
   const [expanded, setExpanded] = useState(false),
     [request, setRequest] = useState(''),
+    [nearbyAddress, setNearbyAddress] = useState(''),
     [busy, setBusy] = useState(false),
     [status, setStatus] = useState(''),
     [fingerprint, setFingerprint] = useState('');
@@ -55,9 +58,10 @@ export function DeviceLinkPanel() {
             onPress: () => {
               void run(async () => {
                 if (!user) throw new Error('Нужен аккаунт.');
-                await approveDevice(request, user.id);
+                if (nearbyAddress.trim()) await approveNearbyDevice(request, user.id, nearbyAddress);
+                else await approveDevice(request, user.id);
                 setStatus(
-                  'Передайте зашифрованный файл ноутбуку до истечения 10 минут.',
+                  nearbyAddress.trim() ? 'Разрешение доставлено ноутбуку. После подключения телефон больше не нужен.' : 'Передайте зашифрованный файл ноутбуку до истечения 10 минут.',
                 );
               });
             },
@@ -98,6 +102,14 @@ export function DeviceLinkPanel() {
           <Text selectable style={{ color: colors.text }}>
             Ключ этого устройства — сверьте на ноутбуке:\n{fingerprint}
           </Text>
+          <Field label="IP:порт ноутбука в локальной сети" value={nearbyAddress}
+            onChangeText={setNearbyAddress} editable={!busy} placeholder="192.168.1.42:8080" />
+          <Button label="Получить запрос с ноутбука" disabled={busy || !nearbyAddress.trim()}
+            onPress={() => { void run(async () => {
+              const pending = await fetchNearbyRequest(nearbyAddress);
+              setRequest(JSON.stringify(pending));
+              setStatus('Запрос найден. Сверьте отпечаток с экраном ноутбука и разрешите.');
+            }); }} />
           <Field
             label="Запрос с ноутбука (JSON)"
             multiline

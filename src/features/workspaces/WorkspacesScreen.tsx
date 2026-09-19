@@ -4,6 +4,9 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useNetwork } from '../../app/NetworkProvider';
+import { getApiNodeOrigin } from '../../shared/api/client';
+import { isPrivateNodeOrigin } from '../connection/connection';
+import { refreshWorkspaceCatalog } from '../roaming/catalog';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
 import {
@@ -34,7 +37,7 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Workspaces'>;
 
 export function WorkspacesScreen({ navigation }: Props) {
   const colors = useAppColors();
-  const { isOnline } = useNetwork();
+  const { isOnline, networkType } = useNetwork();
   const auth = useAuth();
   const queryClient = useQueryClient();
   const [cached, setCached] = useState<Workspace[]>([]);
@@ -56,8 +59,16 @@ export function WorkspacesScreen({ navigation }: Props) {
       setCached(response.items);
       return response;
     },
-    enabled: isOnline,
+    enabled: isOnline && !(networkType === 'cellular' && isPrivateNodeOrigin(getApiNodeOrigin())),
   });
+  useEffect(() => {
+    if (!isOnline || (query.isSuccess && networkType !== 'cellular')) return;
+    let active=true;
+    void refreshWorkspaceCatalog(auth.user?.id || '').then((workspaces)=>{
+      if(active)setCached(workspaces);
+    }).catch(()=>undefined);
+    return()=>{active=false;};
+  },[isOnline,query.isSuccess,networkType,auth.user?.id]);
 
   const saveMutation = useMutation({
     mutationFn: () => editingWorkspace
@@ -95,7 +106,7 @@ export function WorkspacesScreen({ navigation }: Props) {
     },
   });
 
-  const items = query.data?.items ?? cached;
+  const items = query.data?.items?.length ? [...new Map([...query.data.items,...cached].map(w=>[w.id,w])).values()] : cached;
 
   function openCreate() {
     setEditingWorkspace(null);

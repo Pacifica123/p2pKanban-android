@@ -272,6 +272,35 @@ export function useLocalBoard(
       const installed = roamingCapabilityRef.current || await loadRoamingCapability(boardId);
       if (installed) {
         roamingCapabilityRef.current = installed;
+        if (!preferRoaming && (networkType === 'wifi' || networkType === 'ethernet')
+            && isPrivateNodeOrigin(getApiNodeOrigin())) {
+          try {
+            const coordinator = await fetchBoardSnapshot(boardId, workspaceId);
+            await runSerialized(async () => {
+              const queue = await loadOperationQueue();
+              const merged = mergeBoardSnapshots(coordinator, snapshotRef.current);
+              const visible = await persistServerSnapshot(merged, queue);
+              applyState(visible, queue);
+            });
+            setSyncMode('node');
+            // Relay recovery is still needed when the LAN replica lags another peer.
+            void pullRoamingBoard(installed, snapshotRef.current).then(async relay => {
+              await runSerialized(async () => {
+                const recovered = await recoverLocalReplica(installed, snapshotRef.current);
+                if (!recovered) return;
+                const hidden = await pruneLocallyHiddenCards(boardId,
+                  Object.keys(relay.applyState.tombstones || {}));
+                setLocallyHidden(hidden);
+                const visible = applyLocalCardVisibility(recovered, hidden);
+                const queue = await loadOperationQueue();
+                await persistBoardAndQueue(visible, queue);
+                applyState(visible, queue);
+                setSyncMode('roaming'); setRelayCount(relay.relayCount);
+              });
+            }).catch(() => undefined);
+            return;
+          } catch { /* LAN node unavailable: use relay below. */ }
+        }
         const relay = await pullRoamingBoard(installed, snapshotRef.current);
         await runSerialized(async () => {
           const recovered = await recoverLocalReplica(installed, snapshotRef.current);
@@ -379,7 +408,7 @@ export function useLocalBoard(
       refreshLock.current = false;
       setRefreshing(false);
     }
-  }, [applyState, boardId, isOnline, preferRoaming, runSerialized, workspaceId]);
+  }, [applyState, boardId, isOnline, preferRoaming, networkType, runSerialized, workspaceId]);
 
   const flush = useCallback(async () => {
     if (!isOnline || flushLock.current) return;
