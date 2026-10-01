@@ -1,3 +1,4 @@
+import {operationActivity} from './activity';
 import {verifyReplicationChain} from '../deviceLink/protocol';
 import * as Crypto from 'expo-crypto';
 import { getPublicKey, generateSecretKey } from 'nostr-tools/pure';
@@ -325,6 +326,7 @@ export async function commitLocalOperation(
     if (existing) return existing;
     const logicalClock = Math.max(Date.now() * 1000, journal.clock + 1);
     const event = await buildLocalOperation(capability, recoverLegacy ? {...operation,id:Crypto.randomUUID()} : operation, snapshot, logicalClock);
+    event.payload.activity = operationActivity(operation,event);
     if (recoverLegacy) event.payload._replacesLocalOperation = operation.id;
     journal = mergeJournal(journal, [event]);
     journal.pending.push(event.eventId);

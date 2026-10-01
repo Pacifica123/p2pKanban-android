@@ -150,3 +150,11 @@ test('a relay baseline carries deletion evidence even when the delete event is n
   expect(result.snapshot?.cards).toEqual([]);
   expect(result.applyState.tombstones[op.entityId]).toEqual(deletedStamp);
 });
+
+test('history-first empty journal accepts a later cached board seed',async()=>{
+ await pullRoamingBoard(mockCap,null); // Activity can open before Board.
+ const original=applyOperation(seed(),create('cached card'));
+ const op=update('edited card',create());
+ await commitLocalOperation(mockCap,op,applyOperation(original,op),original);
+ expect((await recoverLocalReplica(mockCap,null))?.cards[0]?.title).toBe('edited card');
+});

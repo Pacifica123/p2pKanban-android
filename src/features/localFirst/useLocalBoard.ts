@@ -1,4 +1,5 @@
 import * as Crypto from 'expo-crypto';
+import {useAuth} from '../auth/AuthProvider';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, InteractionManager } from 'react-native';
 
@@ -220,6 +221,7 @@ export function useLocalBoard(
   canEdit = true,
 ): LocalBoardRuntime {
   const { isOnline, networkType } = useNetwork();
+  const {user} = useAuth();
   const preferRoaming = networkType === 'cellular'
     && isPrivateNodeOrigin(getApiNodeOrigin());
   const [snapshot, setSnapshot] = useState<LocalBoardSnapshot | null>(null);
@@ -668,6 +670,7 @@ export function useLocalBoard(
   }, [flush, refresh, hydrated, isOnline]);
 
   const enqueue = useCallback(async (operation: LocalOperation) => {
+    operation = {...operation,actor:{userId:user?.id || null,displayName:user?.displayName || null}};
     if (!canEdit) throw new Error('Гостевой доступ разрешает только чтение доски.');
     const currentSnapshot = snapshotRef.current;
     if (!currentSnapshot) throw new Error('Доска ещё не загружена.');
@@ -683,7 +686,7 @@ export function useLocalBoard(
       applyState(nextSnapshot, nextOperations);
     });
     if (isOnline) void flush();
-  }, [applyState, canEdit, flush, isOnline, runSerialized]);
+  }, [applyState, canEdit, flush, isOnline, runSerialized, user]);
 
   const retryFailed = useCallback(async () => {
     const currentSnapshot = snapshotRef.current;

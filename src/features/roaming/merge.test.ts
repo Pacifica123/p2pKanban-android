@@ -286,3 +286,28 @@ test('card tombstone wins over later stale card.put and prevents resurrection', 
   expect(second.snapshot?.cards).toEqual([]);
   expect(second.applied).toBe(0);
 });
+
+test('versioned web snapshot repairs cached checklist fields without HTTP or old deltas', () => {
+  const base=snapshot();
+  const checklist={id:'checklist',cardId,title:'List',position:1,createdAt:base.cachedAt,updatedAt:base.cachedAt,
+    items:[{id:'item',checklistId:'checklist',title:'Item',position:1,isDone:false,createdAt:base.cachedAt,updatedAt:base.cachedAt}]};
+  base.checklistsByCardId[cardId]=[checklist];
+  const remote={...base,checklistsByCardId:{[cardId]:[{...checklist,items:[{...checklist.items[0]!,isDone:true}]}]}};
+  const stamp={logicalClock:20,replicaId:'replica-b',eventId:'stamp'};
+  const recovery:RoamingBoardEvent={...event(1,'replica-b','same'),entityType:'board',entityId:boardId,
+    operation:'board.snapshot',payload:{snapshot:remote,fieldVersions:{'item:checklist_item.isDone':stamp}}};
+  const result=applyRoamingEvents(base,EMPTY_ROAMING_APPLY_STATE,[recovery]);
+  expect(result.snapshot?.checklistsByCardId[cardId]?.[0]?.items[0]?.isDone).toBe(true);
+  const stale={...recovery,eventId:'stale',payload:{snapshot:base,fieldVersions:{'item:checklist_item.isDone':{...stamp,logicalClock:10}}}};
+  const again=applyRoamingEvents(result.snapshot,result.state,[stale]);
+  expect(again.snapshot?.checklistsByCardId[cardId]?.[0]?.items[0]?.isDone).toBe(true);
+});
+
+test('versioned recovery applies item tombstones to cached checklists',()=>{
+ const base=snapshot();base.checklistsByCardId[cardId]=[{id:'list',cardId,title:'List',position:1,createdAt:base.cachedAt,updatedAt:base.cachedAt,
+ items:[{id:'item',checklistId:'list',title:'Item',position:1,isDone:false,createdAt:base.cachedAt,updatedAt:base.cachedAt}]}];
+ const remote={...base,checklistsByCardId:{[cardId]:[{...base.checklistsByCardId[cardId]![0]!,items:[]}]}};
+ const recovery:RoamingBoardEvent={...event(1,'replica-b','same'),entityType:'board',entityId:boardId,operation:'board.snapshot',
+ payload:{snapshot:remote,fieldVersions:{'item:checklist_item.__lifecycle':{logicalClock:30,replicaId:'replica-b',eventId:'delete'}}}};
+ expect(applyRoamingEvents(base,EMPTY_ROAMING_APPLY_STATE,[recovery]).snapshot?.checklistsByCardId[cardId]?.[0]?.items).toEqual([]);
+});

@@ -5,7 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useNetwork } from '../../app/NetworkProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
-import { getBoardActivity } from '../../shared/api/endpoints';
+import { getCommonBoardActivity } from './replicatedActivity';
 import { activityLabel, changedFieldsLabel } from '../../shared/lib/russian';
 import {
   Button,
@@ -36,17 +36,18 @@ export function ActivityScreen({ navigation, route }: Props) {
   const { isOnline } = useNetwork();
   const query = useQuery({
     queryKey: ['activity', boardId],
-    queryFn: () => getBoardActivity(boardId),
-    enabled: isOnline,
+    queryFn: () => getCommonBoardActivity(boardId,isOnline),
+    refetchInterval: isOnline ? 15_000 : false,
   });
 
   return (
     <Screen scroll>
       <ScreenHeader title="История" subtitle={boardName} onBack={() => navigation.goBack()} />
       {!isOnline ? (
-        <InlineNotice text="История доступна после подключения к узлу." tone="warning" />
+        <InlineNotice text="Показана сохранённая общая история доски." tone="warning" />
       ) : null}
-      {query.isPending && isOnline ? <StateView title="Загружаем историю" busy /> : null}
+      {query.data?.stale && isOnline ? <InlineNotice text="Реле недоступны; показана сохранённая общая история." tone="warning" /> : null}
+      {query.isPending ? <StateView title="Загружаем историю" busy /> : null}
       {query.isError ? (
         <StateView
           title="История недоступна"

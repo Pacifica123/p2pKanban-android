@@ -421,7 +421,69 @@ export function applyRoamingEvents(
           }
           versions[fieldKey(snapshot.board.id, BOARD_APPEARANCE_FIELD)] = stamp;
           applied += 1;
-        } else if (
+        } else {
+          // A cached/seeded board also needs recovery snapshots. Merge each
+          // checklist field under its original stamp, never the snapshot time.
+          const source = (event.payload.fieldVersions || {}) as Record<string, RoamingVersionStamp>;
+          const apply = (delta: Record<string, unknown>, version: RoamingVersionStamp) => {
+            if (!Number.isSafeInteger(version.logicalClock)) return;
+            const recovered = applyChecklistDelta(snapshot!, {
+              ...event, ...version, entityId: delta.cardId as string,
+              operation: 'card.put', payload: {checklistDelta: delta},
+            }, versions, checklistTombstones, checklistItemTombstones);
+            snapshot = recovered.snapshot;
+            if (recovered.changed) applied += 1;
+          };
+          const fallback = {...stamp, logicalClock: 1};
+          for (const card of candidate.cards) {
+            if (card.boardId !== snapshot.board.id || tombstones[card.id]
+              || snapshot.cards.some(existing => existing.id === card.id)) continue;
+            snapshot = {...snapshot,cards:[...snapshot.cards,stripRemovedCardState(card)]};
+            for (const field of CARD_FIELDS) {
+              versions[fieldKey(card.id,field)] = source[fieldKey(card.id,field)] || fallback;
+            }
+          }
+          for (const card of snapshot.cards) {
+            for (const checklist of candidate.checklistsByCardId?.[card.id] || []) {
+              if (checklist.cardId !== card.id) continue;
+              const base = {kind:'checklist.put',cardId:card.id,checklistId:checklist.id,
+                checklist:{...checklist,items:[]}};
+              if (!(snapshot.checklistsByCardId[card.id] || []).some(item => item.id === checklist.id)) {
+                apply({...base,fieldMask:['*']}, source[fieldKey(checklist.id,'checklist.__lifecycle')] || fallback);
+              }
+              for (const field of ['title','position']) {
+                const version = source[fieldKey(checklist.id,`checklist.${field}`)];
+                if (version) apply({...base,fieldMask:[field]},version);
+              }
+              for (const item of checklist.items || []) {
+                if (item.checklistId !== checklist.id) continue;
+                const itemBase = {kind:'checklist_item.put',cardId:card.id,checklistId:checklist.id,itemId:item.id,item};
+                const current = snapshot.checklistsByCardId[card.id]?.find(value => value.id === checklist.id);
+                if (!current?.items.some(value => value.id === item.id)) {
+                  apply({...itemBase,fieldMask:['*']},source[fieldKey(item.id,'checklist_item.__lifecycle')] || fallback);
+                }
+                for (const field of ['title','position','isDone']) {
+                  const version = source[fieldKey(item.id,`checklist_item.${field}`)];
+                  if (version) apply({...itemBase,fieldMask:[field]},version);
+                }
+              }
+            }
+            // Explicit tombstone stamps survive pruning of old relay deltas.
+            for (const checklist of [...(snapshot.checklistsByCardId[card.id] || [])]) {
+              const live = candidate.checklistsByCardId?.[card.id] || [];
+              const deleted = source[fieldKey(checklist.id,'checklist.__lifecycle')];
+              if (deleted && !live.some(value => value.id === checklist.id)) {
+                apply({kind:'checklist.delete',cardId:card.id,checklistId:checklist.id,fieldMask:['__lifecycle']},deleted);
+              }
+              for (const item of checklist.items) {
+                const deletedItem = source[fieldKey(item.id,'checklist_item.__lifecycle')];
+                if (deletedItem && !live.some(value => value.items.some(entry => entry.id === item.id))) {
+                  apply({kind:'checklist_item.delete',cardId:card.id,itemId:item.id,fieldMask:['__lifecycle']},deletedItem);
+                }
+              }
+            }
+          }
+          if (
           candidate.appearance
           && eventWins(versions, snapshot.board.id, BOARD_APPEARANCE_FIELD, stamp)
         ) {
@@ -433,6 +495,7 @@ export function applyRoamingEvents(
               cachedAt: event.occurredAt,
             };
             applied += 1;
+          }
           }
         }
       }

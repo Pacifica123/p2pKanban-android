@@ -24,6 +24,7 @@ export interface LocalBoardSnapshot {
 }
 
 interface OperationBase {
+  actor?: {userId: string | null; displayName: string | null};
   id: string;
   boardId: string;
   entityId: string;

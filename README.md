@@ -228,3 +228,7 @@ POST /api/v1/auth/native/sign-out
 
 
 Разные сети и исправление E0599 при обновлении: [инструкция и проверка](docs/architecture/network-recovery-20261001.md).
+
+## 2026-10-01 correction
+
+See [Shared history and cross-network recovery](docs/shared-history-and-checklist-recovery.md).

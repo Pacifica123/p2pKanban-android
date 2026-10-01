@@ -28,7 +28,7 @@ export async function loadJournal(cap: RoamingCapability, seed: LocalBoardSnapsh
   const raw = await AsyncStorage.getItem(key(cap.boardId));
   if (raw) {
     const value = JSON.parse(raw) as ReplicaJournal;
-    if (value.epoch === cap.capabilityEpoch) return value;
+    if (value.epoch === cap.capabilityEpoch) return {...value,seed:value.seed || seed};
   }
   return { epoch: cap.capabilityEpoch, seed, events: [], pending: [], clock: 0 } satisfies ReplicaJournal;
 }

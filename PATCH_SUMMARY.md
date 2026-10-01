@@ -1,9 +1,9 @@
-# Recover autonomous Android boards/catalogs across mobile and foreign Wi-Fi networks
+# Read shared activity without HTTP and merge recovery checklist snapshots
 
-Base: supplied snapshot `d0a913b`.
+Base: supplied snapshot `26b5007`.
 
-Fixes the network-recovery path using the supplied 2.1.0 sources. Web enables reqwest JSON and retains its updated Cargo.lock, rejects compile errors as retryable network failures, supervises roaming worker startup and filters catalogs by recipient. Android polls catalogs independently of HTTP/type of network, merges discovered boards into the visible list, permits scoped introductions from trusted peers, applies only the newest authenticated catalog, refuses stale epochs/key changes and invalid relay quorums, and validates received relay filter scope. Provisioned board reads no longer wait for a private HTTP endpoint.
+Activity reads the shared authenticated relay history from all authorized writers and caches it durably instead of requiring HTTP after enrollment. Android mutations carry canonical activity metadata (id, timestamp, actor, action, entity and field mask); retries/snapshots do not create actions. Offline/relay failure retains common cached history with an explicit stale indicator. History-first journal initialization permits later cached board seeding.
 
-No schema or wire-protocol change, profile reset, session clearing or re-import. Documentation contains update order and explicit cross-network/offline acceptance. devctl gates stay dependency-download-free; compiled/typechecked/Jest evidence is separate. Real smartphone/Docker/PostgreSQL/ISP testing is pending.
+Existing cached boards now consume checklist recovery snapshots, filling missing entities and applying original scalar field versions and lifecycle tombstones. Stale snapshots do not override newer checklist marks. Includes peer-history/offline/error and cached-snapshot/empty-journal regressions. Typecheck, 89 Jest tests and Android export pass. Real APK/phone/network acceptance remains required.
 
-Rollback: devctl source rollback. User data/keys/queues are not bundled or erased. Existing pending journal is retained when relay quorum is unavailable.
+Apply matching web patch to all nodes first, then build/install this Android source over the current app. Do not clear application data or re-pair. Historical records never retained anywhere cannot be fabricated. Common history of comments/labels is not replication of their content. Reachable-node RPC/Iroh is documented as the next patch, not claimed here.

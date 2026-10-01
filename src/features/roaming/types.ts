@@ -38,7 +38,7 @@ export interface RoamingBoardEvent {
   logicalClock: number;
   entityType: 'board' | 'card';
   entityId: string;
-  operation: 'board.snapshot' | 'board.appearance.put' | 'card.put' | 'card.delete';
+  operation: 'board.activity' | 'board.snapshot' | 'board.appearance.put' | 'card.put' | 'card.delete';
   fieldMask: string[];
   payload: Record<string, unknown>;
   occurredAt: string;
