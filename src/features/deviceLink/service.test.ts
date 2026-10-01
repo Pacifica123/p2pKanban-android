@@ -9,6 +9,8 @@ jest.mock('../../shared/api/client', () => {
 jest.mock('../../shared/storage/storage', () => ({ readSessionJson: jest.fn(), writeSessionJson: jest.fn(), sessionStorageKey: () => 'test-scope' }));
 jest.mock('../roaming/storage', () => ({ getOrCreateRoamingDeviceSecret: async () => new Uint8Array(32).fill(1) }));
 jest.mock('../localFirst/repository', () => ({}));
+jest.mock('../roaming/service', () => ({pullRoamingBoard: jest.fn()}));
+jest.mock('../roaming/nostrRelay', () => ({fetchFromRelays: jest.fn()}));
 jest.mock('expo-file-system', () => ({ File: jest.fn(), Paths: { cache: 'cache' } }));
 jest.mock('expo-sharing', () => ({ shareAsync: jest.fn() }));
 jest.mock('./protocol', () => ({ decryptPack: jest.fn(), verifyChain: jest.fn() }));

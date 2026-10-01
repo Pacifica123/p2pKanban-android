@@ -62,7 +62,9 @@ export async function fetchOne(url: string, filter: Filter) {
         const frame = JSON.parse(String(message.data)) as unknown[];
         if (frame[0] === 'EVENT' && frame[1] === subscriptionId) {
           const event = frame[2] as NostrEvent;
-          if (verifyEvent(event)) events.push(event);
+          if (verifyEvent(event) && (!filter.kinds || filter.kinds.includes(event.kind))
+            && (!filter['#d'] || event.tags.some(tag => tag[0] === 'd' && tag[1] !== undefined && filter['#d']!.includes(tag[1])))
+            && (!filter['#p'] || event.tags.some(tag => tag[0] === 'p' && tag[1] !== undefined && filter['#p']!.includes(tag[1])))) events.push(event);
         }
         if (frame[0] === 'EOSE' && frame[1] === subscriptionId) {
           socket.send(JSON.stringify(['CLOSE', subscriptionId]));
@@ -100,12 +102,17 @@ export async function publishToRelays(
   event: NostrEvent,
   minimumAcks: number,
 ) {
+  // Count distinct relay endpoints, never duplicate URLs or an empty quorum.
+  relays = [...new Set(relays)];
+  if (!relays.length || !Number.isInteger(minimumAcks) || minimumAcks < 1 || minimumAcks > relays.length) {
+    throw new Error('Некорректный набор relay или число обязательных подтверждений.');
+  }
   const settled = await Promise.allSettled(relays.map((relay) => publishOne(relay, event)));
   const acceptedRelays = settled.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
   const failedRelays = relays.filter((relay) => !acceptedRelays.includes(relay));
-  if (acceptedRelays.length < Math.min(minimumAcks, relays.length)) {
+  if (acceptedRelays.length < minimumAcks) {
     throw new Error(
-      `Relay-журнал принят: ${acceptedRelays.length} из ${Math.min(minimumAcks, relays.length)} обязательных подтверждений.`,
+      `Relay-журнал принят: ${acceptedRelays.length} из ${minimumAcks} обязательных подтверждений.`,
     );
   }
   return { acceptedRelays, failedRelays };

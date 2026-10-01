@@ -225,3 +225,6 @@ POST /api/v1/auth/native/sign-out
 ```
 
 Обычные web endpoints и их HttpOnly cookie не изменены.
+
+
+Разные сети и исправление E0599 при обновлении: [инструкция и проверка](docs/architecture/network-recovery-20261001.md).

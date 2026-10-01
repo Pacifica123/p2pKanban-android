@@ -23,3 +23,11 @@ test('parallel capability writes preserve every board in the cleanup index',asyn
   await Promise.all(['a','b','c'].map(boardId=>saveRoamingCapability({boardId,boardKey:'key'} as RoamingCapability)));
   expect(JSON.parse((await AsyncStorage.getItem('roaming/capability-index'))!)).toEqual(['a','b','c']);
 });
+test('stale relay metadata cannot replace a newer epoch or rotate its key',async()=>{
+  const capability={boardId:'a',boardKey:'new-key',boardTag:'tag',capabilityEpoch:2,
+    relays:['r1','r2'],eventKind:1979,writerPublicKeys:[]} as unknown as RoamingCapability;
+  await saveRoamingCapability(capability);
+  await expect(saveRoamingCapability({...capability,capabilityEpoch:1,boardKey:'old-key'})).rejects.toThrow('устаревшее');
+  await expect(saveRoamingCapability({...capability,boardKey:'other-key'})).rejects.toThrow('без нового');
+  expect(mockSecure.get('p2pkanban.mobile.roaming-capability.v1.a')).toBe('new-key');
+});

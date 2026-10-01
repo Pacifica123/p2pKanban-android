@@ -32,7 +32,7 @@ test('restores a missing board and capability from a trusted direct relay catalo
   (fetchDeviceCatalogEvents as jest.Mock).mockResolvedValue({relayCount:1,events:[event('untrusted',['bad']),event('trusted',['good'],2)]});
   (decryptPayloadParts as jest.Mock).mockReturnValue({protocol:'p2p-kanban-device-catalog/1',workspaceId:'workspace',board,capability,publishedAt:'2026-01-01'});
   await expect(refreshDeviceCatalog('workspace')).resolves.toEqual([board]);
-  expect(decryptPayloadParts).toHaveBeenCalledTimes(1);
+  expect(decryptPayloadParts).toHaveBeenCalledTimes(2);
   expect(installRoamingCapability).toHaveBeenCalledWith(capability);
   expect(saveCachedBoards).toHaveBeenCalledWith('workspace',[board]);
 });
@@ -51,4 +51,34 @@ test('recovers a new workspace from an encrypted catalog with a verified delegat
   expect(saveCachedWorkspaces).toHaveBeenCalledWith([
     expect.objectContaining({id:'workspace',accessEpoch:1}),
   ]);
+});
+test('newest authenticated workspace catalog wins regardless of relay result order',async()=>{
+  jest.clearAllMocks();
+  (fetchDeviceCatalogEvents as jest.Mock).mockResolvedValue({relayCount:1,
+    events:[event('trusted',['new'],3),event('trusted',['old'],2)]});
+  (decryptPayloadParts as jest.Mock).mockImplementation((_secret,_sender,parts)=>({
+    protocol:'p2p-kanban-device-catalog/1',workspaceId:'workspace',
+    workspace:{id:'workspace',name:'Space',visibility:'private'},
+    board:{...board,name:parts[0]==='new'?'Latest':'Stale'},capability,publishedAt:'2026-01-01'}));
+  (verifyChain as jest.Mock).mockReturnValue({root:'trusted',grant:{userId:'user',boardId:'board',
+    workspaceId:'workspace',epoch:1,canDelegate:true}});
+  await refreshWorkspaceCatalog('user');
+  expect(installRoamingCapability).toHaveBeenCalledTimes(1);
+  expect(saveCachedBoards).toHaveBeenLastCalledWith('workspace',[expect.objectContaining({name:'Latest'})]);
+});
+test('an introduced laptop can publish new boards in an existing workspace without HTTP',async()=>{
+  jest.clearAllMocks();
+  (fetchDeviceCatalogEvents as jest.Mock).mockResolvedValue({relayCount:1,events:[event('laptop',['new'],4)]});
+  const intro=[{id:'intro'}], delegated=[{id:'delegated'}];
+  (decryptPayloadParts as jest.Mock).mockReturnValue({protocol:'p2p-kanban-device-catalog/1',
+    workspaceId:'workspace',board,capability:{...capability,delegationChain:delegated},
+    introductionChain:intro,publishedAt:'2026-01-01'});
+  (verifyChain as jest.Mock).mockImplementation(chain=>chain===intro
+    ?{root:'trusted',grant:{userId:'user',canDelegate:true}}
+    :{root:'laptop',grant:{userId:'user',boardId:'board',workspaceId:'workspace',epoch:1}});
+  await expect(refreshDeviceCatalog('workspace','user')).resolves.toEqual([board]);
+  expect(installRoamingCapability).toHaveBeenCalledTimes(1);
+  jest.clearAllMocks();
+  await expect(refreshDeviceCatalog('workspace','other-user')).resolves.toEqual([]);
+  expect(installRoamingCapability).not.toHaveBeenCalled();
 });

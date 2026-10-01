@@ -62,13 +62,22 @@ export function WorkspacesScreen({ navigation }: Props) {
     enabled: isOnline && !(networkType === 'cellular' && isPrivateNodeOrigin(getApiNodeOrigin())),
   });
   useEffect(() => {
-    if (!isOnline || (query.isSuccess && networkType !== 'cellular')) return;
-    let active=true;
-    void refreshWorkspaceCatalog(auth.user?.id || '').then((workspaces)=>{
-      if(active)setCached(workspaces);
-    }).catch(()=>undefined);
-    return()=>{active=false;};
-  },[isOnline,query.isSuccess,networkType,auth.user?.id]);
+    if (!isOnline || !auth.user?.id) return;
+    let active = true;
+    let busy = false;
+    const refreshCatalog = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const workspaces = await refreshWorkspaceCatalog(auth.user!.id);
+        if (active) setCached(workspaces);
+      } catch { /* A failed HTTP or relay request cannot erase cached spaces. */ }
+      finally { busy = false; }
+    };
+    void refreshCatalog();
+    const timer = setInterval(() => { void refreshCatalog(); }, 30_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [isOnline, networkType, auth.user?.id]);
 
   const saveMutation = useMutation({
     mutationFn: () => editingWorkspace

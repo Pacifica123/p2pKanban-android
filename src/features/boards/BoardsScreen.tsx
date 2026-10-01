@@ -9,6 +9,7 @@ import {getApiNodeOrigin} from '../../shared/api/client';
 import {isPrivateNodeOrigin} from '../connection/connection';
 import {listLocalReplicaBoards} from '../localFirst/repository';
 import {refreshDeviceCatalog} from '../roaming/catalog';
+import { useAuth } from '../auth/AuthProvider';
 import type { RootStackParamList } from '../../app/navigation/types';
 import { radius, spacing, useAppColors } from '../../app/theme';
 import {
@@ -49,6 +50,7 @@ export function BoardsScreen({ navigation, route }: Props) {
   } = route.params;
   const canEdit = workspaceRole === 'owner' || workspaceRole === 'member';
   const colors = useAppColors();
+  const { user } = useAuth();
   const { isOnline, networkType } = useNetwork();
   const privateHttpNode = isPrivateNodeOrigin(getApiNodeOrigin());
   const preferReplicaCatalog = networkType === 'cellular' && privateHttpNode;
@@ -121,15 +123,25 @@ export function BoardsScreen({ navigation, route }: Props) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['boards', workspaceId] }),
   });
 
-  const items = query.data?.items?.length ? query.data.items : cached;
-  useEffect(()=>{
-    if(!isOnline || (!preferReplicaCatalog && query.isSuccess))return;
-    let active=true;
-    void refreshDeviceCatalog(workspaceId).then(boards=>{
-      if(active&&boards.length)setCached(current=>[...new Map([...current,...boards].map(board=>[board.id,board])).values()]);
-    }).catch(()=>undefined);
-    return()=>{active=false;};
-  },[isOnline,workspaceId,preferReplicaCatalog,query.isSuccess]);
+  const items = [...new Map([...(query.data?.items || []), ...cached].map(board => [board.id, board])).values()];
+  useEffect(() => {
+    if (!isOnline) return;
+    let active = true;
+    let busy = false;
+    const refreshCatalog = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const boards = await refreshDeviceCatalog(workspaceId, user?.id);
+        if (active && boards.length) setCached(current =>
+          [...new Map([...current, ...boards].map(board => [board.id, board])).values()]);
+      } catch { /* Local replica stays usable during a relay outage. */ }
+      finally { busy = false; }
+    };
+    void refreshCatalog();
+    const timer = setInterval(() => { void refreshCatalog(); }, 30_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [isOnline, workspaceId, networkType, user?.id]);
   const boardIds = items.map((board) => board.id).join('|');
 
   function openCreate() {

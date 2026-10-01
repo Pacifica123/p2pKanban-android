@@ -29,6 +29,14 @@ function applyStateKey(boardId: string) {
 }
 
 async function writeRoamingCapability(capability: RoamingCapability) {
+  const previous = await loadRoamingCapability(capability.boardId);
+  if (previous && capability.capabilityEpoch < previous.capabilityEpoch) {
+    throw new Error('Каталог содержит устаревшее поколение доступа к доске.');
+  }
+  if (previous && capability.capabilityEpoch === previous.capabilityEpoch
+      && (capability.boardKey !== previous.boardKey || capability.boardTag !== previous.boardTag)) {
+    throw new Error('Ключ доски изменился без нового поколения доступа.');
+  }
   const previousChannel = await loadRoamingCatalogChannel();
   const channel: RoamingCatalogChannel = {
     relays: [...new Set([...(previousChannel?.relays || []), ...(capability.relays || [])])],
